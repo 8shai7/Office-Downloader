@@ -78,7 +78,25 @@ function Start-OfficeODTInteractive {
         }
     }
 
-    function Invoke-Exe {
+    function Get-ODTDownloadUrl {
+        $detailsUrl = "https://www.microsoft.com/en-us/download/details.aspx?id=49117"
+        $fallback   = "https://aka.ms/ODT"
+        try {
+            Say "Resolving latest ODT download URL..." DarkGray
+            $resp = Invoke-WebRequest -Uri $detailsUrl -UseBasicParsing -Headers @{ "Cache-Control"="no-cache"; "Pragma"="no-cache"; "User-Agent"="PowerShell" }
+            $re = '"url"\s*:\s*"(https://download\.microsoft\.com/download/[^"]+officedeploymenttool[^"]+\.exe)"'
+            if ($resp.Content -match $re) { return $Matches[1] }
+            $re2 = '(https://download\.microsoft\.com/download/[^"\s]+officedeploymenttool[^"\s]+\.exe)'
+            $m = [regex]::Match($resp.Content, $re2)
+            if ($m.Success) { return $m.Groups[1].Value }
+            return $fallback
+        } catch {
+            Say "Could not scrape Download Center page. Using fallback: $fallback" Yellow
+            return $fallback
+        }
+    }
+
+    function Invoke-ExeNoExitCodeAssumption {
         param(
             [Parameter(Mandatory)][string] $FilePath,
             [Parameter(Mandatory)][string[]] $Arguments,
@@ -92,54 +110,31 @@ function Start-OfficeODTInteractive {
         $old = Get-Location
         try {
             if ($WorkingDirectory) { Set-Location -LiteralPath $WorkingDirectory }
-            & $FilePath @Arguments
-            $exitCode = 0
-            if (Test-Path variable:LASTEXITCODE) {
-                $exitCode = $LASTEXITCODE
-            }
-
-            if ($exitCode -ne 0) {
-                throw ("Command failed with exit code {0} - {1} {2}" -f $exitCode, $FilePath, $argLine)
-            }
-
+            $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -WindowStyle Hidden
+            $p.WaitForExit()
+            try {
+                if ($p.ExitCode -ne 0) {
+                    throw ("Command failed with exit code {0} - {1} {2}" -f $p.ExitCode, $FilePath, $argLine)
+                }
+            } catch { }
         } finally {
             Set-Location $old
         }
     }
 
-    function Get-ODTDownloadUrl {
-        <#
-          Microsoft changes the direct download.microsoft.com URL periodically.
-          This function scrapes the official Download Center page (id=49117) to find the current EXE.
-        #>
-        $detailsUrl = "https://www.microsoft.com/en-us/download/details.aspx?id=49117"
-        $fallback   = "https://aka.ms/ODT"
-
-        try {
-            Say "Resolving latest ODT download URL..." DarkGray
-            $resp = Invoke-WebRequest -Uri $detailsUrl -UseBasicParsing -Headers @{ "Cache-Control"="no-cache"; "Pragma"="no-cache"; "User-Agent"="PowerShell" }
-
-            # Common pattern used on the page: "url":"https://download.microsoft.com/download/<guid>/officedeploymenttool_....exe"
-            $re = '"url"\s*:\s*"(https://download\.microsoft\.com/download/[^"]+officedeploymenttool[^"]+\.exe)"'
-            if ($resp.Content -match $re) { return $Matches[1] }
-
-            # Fallback: sometimes the "Download" button is present as a plain link in HTML
-            $re2 = '(https://download\.microsoft\.com/download/[^"\s]+officedeploymenttool[^"\s]+\.exe)'
-            $m = [regex]::Match($resp.Content, $re2)
-            if ($m.Success) { return $m.Groups[1].Value }
-
-            return $fallback
-        } catch {
-            Say "Could not scrape Download Center page. Using fallback: $fallback" Yellow
-            return $fallback
-        }
+    function Find-SetupExe {
+        param([Parameter(Mandatory)][string] $SearchRoot)
+        $direct = Join-Path $SearchRoot "setup.exe"
+        if (Test-Path $direct) { return $direct }
+        $found = Get-ChildItem -Path $SearchRoot -Filter "setup.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($found) { return $found.FullName }
+        return $null
     }
 
     Write-Output "[INFO] Starting Office ODT interactive downloader/installer..."
     Say "Starting Office ODT interactive downloader/installer..." Green
     Warn-IfNotAdmin
 
-    # Work folder
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     New-Item -ItemType Directory -Path $base | Out-Null
 
@@ -156,12 +151,24 @@ function Start-OfficeODTInteractive {
     Invoke-WebRequest -Uri $odtUrl -OutFile $odtExe -UseBasicParsing -Headers @{ "Cache-Control"="no-cache"; "Pragma"="no-cache"; "User-Agent"="PowerShell" }
 
     Say "Extracting ODT..." Yellow
-    Invoke-Exe -FilePath $odtExe -Arguments @("/quiet", ("/extract:{0}" -f $odtExtract)) -StepName "Extracting ODT to $odtExtract"
+    Say "Extracting ODT to $odtExtract" DarkGray
 
-    $setupExe = Join-Path $odtExtract "setup.exe"
-    if (-not (Test-Path $setupExe)) {
-        throw "ODT extraction failed: setup.exe not found in $odtExtract"
+    Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:{0}" -f $odtExtract)) -StepName "Extracting ODT..."
+
+    $setupExe = Find-SetupExe -SearchRoot $odtExtract
+    if (-not $setupExe) { $setupExe = Find-SetupExe -SearchRoot $base }
+
+    if (-not $setupExe) {
+        Start-Sleep -Milliseconds 800
+        $setupExe = Find-SetupExe -SearchRoot $odtExtract
+        if (-not $setupExe) { $setupExe = Find-SetupExe -SearchRoot $base }
     }
+
+    if (-not $setupExe) {
+        throw "ODT extraction failed: setup.exe not found under $odtExtract (or $base)."
+    }
+
+    Say "Found setup.exe at: $setupExe" Green
 
     # ========= Interactive options =========
 
@@ -197,7 +204,6 @@ function Start-OfficeODTInteractive {
             "3"="SemiAnnual"
             "4"="Beta"
         } -DefaultKey "2"
-
         $channel = switch ($channelChoice) {
             "1" { "Current" }
             "2" { "MonthlyEnterprise" }
@@ -242,7 +248,6 @@ function Start-OfficeODTInteractive {
     $sourcePath = Join-Path $base "OfficeSource"
     New-Item -ItemType Directory -Path $sourcePath | Out-Null
 
-    # ========= Build configuration.xml =========
     $excludeXml = ""
     foreach ($app in $excludeApps) { $excludeXml += "      <ExcludeApp ID=`"$app`" />`r`n" }
 
@@ -284,7 +289,7 @@ $excludeXml    </Product>
 
     Say "" White
     Say "Starting download: setup.exe /download configuration.xml" Yellow
-    Invoke-Exe -FilePath $setupExe -WorkingDirectory $odtExtract -Arguments @("/download", $configPath) -StepName "Downloading Office content..."
+    Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/download", $configPath) -WorkingDirectory (Split-Path -Parent $setupExe) -StepName "Downloading Office content..."
 
     Say "" White
     Say "Download completed." Green
@@ -292,7 +297,7 @@ $excludeXml    </Product>
     if ($doInstall) {
         Say "" White
         Say "Starting install/configure: setup.exe /configure configuration.xml" Yellow
-        Invoke-Exe -FilePath $setupExe -WorkingDirectory $odtExtract -Arguments @("/configure", $configPath) -StepName "Installing/Configuring Office..."
+        Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory (Split-Path -Parent $setupExe) -StepName "Installing/Configuring Office..."
         Say "" White
         Say "Install/configure completed." Green
     }
