@@ -1,7 +1,6 @@
-# Office ODT interactive downloader/installer
-# Intended to run via: irm <raw-url> | iex
-# If your environment has issues with plain iex, use:
-#   iex ([ScriptBlock]::Create((irm <raw-url>)))
+# odt_payload.ps1
+# Office ODT interactive downloader/installer (payload)
+# Called by downloader.ps1 bootstrap
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -93,9 +92,10 @@ function Start-OfficeODTInteractive {
         try {
             if ($WorkingDirectory) { Set-Location -LiteralPath $WorkingDirectory }
             & $FilePath @Arguments
-            $exit = $LASTEXITCODE
-            if ($exit -ne 0 -and $exit -ne $null) {
-                throw "Command failed with exit code $exit: $FilePath $argLine"
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0 -and $exitCode -ne $null) {
+                # IMPORTANT: Avoid "$var:" in expandable strings (causes parse errors when ScriptBlock::Create parses this file)
+                throw ("Command failed with exit code {0} - {1} {2}" -f $exitCode, $FilePath, $argLine)
             }
         } finally {
             Set-Location $old
