@@ -10,12 +10,14 @@ function Start-OfficeODTInteractive {
 
     function Say {
         param(
-            [Parameter(Mandatory)][string] $Message,
+            [AllowEmptyString()]
+            [string] $Message = "",
             [ConsoleColor] $Color = [ConsoleColor]::White
         )
         try { Write-Host $Message -ForegroundColor $Color } catch { Write-Output $Message }
         try { [Console]::Out.Flush() } catch {}
     }
+
 
     function Ask {
         param([Parameter(Mandatory)][string] $Prompt)
