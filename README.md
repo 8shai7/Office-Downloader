@@ -5,7 +5,7 @@ Interactive PowerShell script for downloading and optionally installing Microsof
 Designed to run **directly from the internet** using:
 
 ```powershell
-irm "https://raw.githubusercontent.com/8shai7/Office-Downloader/refs/heads/main/downloader.ps1" | iex
+irm https://raw.githubusercontent.com/8shai7/Office-Downloader/main/downloader.ps1 | iex
 ```
 
 No manual XML editing required.
@@ -58,7 +58,7 @@ No manual XML editing required.
 ## 🚀 Usage
 
 ```powershell
-irm "https://raw.githubusercontent.com/8shai7/Office-Downloader/refs/heads/main/downloader.ps1" | iex
+irm https://raw.githubusercontent.com/8shai7/Office-Downloader/main/downloader.ps1 | iex
 ```
 
 ---
