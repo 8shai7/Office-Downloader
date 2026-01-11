@@ -93,10 +93,15 @@ function Start-OfficeODTInteractive {
         try {
             if ($WorkingDirectory) { Set-Location -LiteralPath $WorkingDirectory }
             & $FilePath @Arguments
-            $exitCode = $LASTEXITCODE
-            if ($exitCode -ne 0 -and $exitCode -ne $null) {
+            $exitCode = 0
+            if (Test-Path variable:LASTEXITCODE) {
+                $exitCode = $LASTEXITCODE
+            }
+
+            if ($exitCode -ne 0) {
                 throw ("Command failed with exit code {0} - {1} {2}" -f $exitCode, $FilePath, $argLine)
             }
+
         } finally {
             Set-Location $old
         }
