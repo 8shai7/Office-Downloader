@@ -7,6 +7,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'Continue'
 
 function Start-OfficeODTInteractive {
+
     function Say {
         param(
             [Parameter(Mandatory)][string] $Message,
@@ -94,7 +95,6 @@ function Start-OfficeODTInteractive {
             & $FilePath @Arguments
             $exitCode = $LASTEXITCODE
             if ($exitCode -ne 0 -and $exitCode -ne $null) {
-                # IMPORTANT: Avoid "$var:" in expandable strings (causes parse errors when ScriptBlock::Create parses this file)
                 throw ("Command failed with exit code {0} - {1} {2}" -f $exitCode, $FilePath, $argLine)
             }
         } finally {
@@ -102,21 +102,53 @@ function Start-OfficeODTInteractive {
         }
     }
 
+    function Get-ODTDownloadUrl {
+        <#
+          Microsoft changes the direct download.microsoft.com URL periodically.
+          This function scrapes the official Download Center page (id=49117) to find the current EXE.
+        #>
+        $detailsUrl = "https://www.microsoft.com/en-us/download/details.aspx?id=49117"
+        $fallback   = "https://aka.ms/ODT"
+
+        try {
+            Say "Resolving latest ODT download URL..." DarkGray
+            $resp = Invoke-WebRequest -Uri $detailsUrl -UseBasicParsing -Headers @{ "Cache-Control"="no-cache"; "Pragma"="no-cache"; "User-Agent"="PowerShell" }
+
+            # Common pattern used on the page: "url":"https://download.microsoft.com/download/<guid>/officedeploymenttool_....exe"
+            $re = '"url"\s*:\s*"(https://download\.microsoft\.com/download/[^"]+officedeploymenttool[^"]+\.exe)"'
+            if ($resp.Content -match $re) { return $Matches[1] }
+
+            # Fallback: sometimes the "Download" button is present as a plain link in HTML
+            $re2 = '(https://download\.microsoft\.com/download/[^"\s]+officedeploymenttool[^"\s]+\.exe)'
+            $m = [regex]::Match($resp.Content, $re2)
+            if ($m.Success) { return $m.Groups[1].Value }
+
+            return $fallback
+        } catch {
+            Say "Could not scrape Download Center page. Using fallback: $fallback" Yellow
+            return $fallback
+        }
+    }
+
     Write-Output "[INFO] Starting Office ODT interactive downloader/installer..."
     Say "Starting Office ODT interactive downloader/installer..." Green
     Warn-IfNotAdmin
 
+    # Work folder
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     New-Item -ItemType Directory -Path $base | Out-Null
 
     $odtExe     = Join-Path $base "officedeploymenttool.exe"
-    $odtUrl     = "https://download.microsoft.com/download/2/7/A/27AF1BE6-DD20-4CB4-B154-EBAB8A7D4A7E/officedeploymenttool.exe"
     $odtExtract = Join-Path $base "ODT"
     New-Item -ItemType Directory -Path $odtExtract | Out-Null
 
     Say "Working folder: $base" DarkGray
+
+    $odtUrl = Get-ODTDownloadUrl
     Say "Downloading Office Deployment Tool (ODT)..." Yellow
-    Invoke-WebRequest -Uri $odtUrl -OutFile $odtExe -UseBasicParsing
+    Say "ODT URL: $odtUrl" DarkGray
+
+    Invoke-WebRequest -Uri $odtUrl -OutFile $odtExe -UseBasicParsing -Headers @{ "Cache-Control"="no-cache"; "Pragma"="no-cache"; "User-Agent"="PowerShell" }
 
     Say "Extracting ODT..." Yellow
     Invoke-Exe -FilePath $odtExe -Arguments @("/quiet", ("/extract:{0}" -f $odtExtract)) -StepName "Extracting ODT to $odtExtract"
@@ -125,6 +157,8 @@ function Start-OfficeODTInteractive {
     if (-not (Test-Path $setupExe)) {
         throw "ODT extraction failed: setup.exe not found in $odtExtract"
     }
+
+    # ========= Interactive options =========
 
     $productOptions = @{
         "1" = "Microsoft 365 Apps for enterprise (O365ProPlusRetail)"
@@ -203,6 +237,7 @@ function Start-OfficeODTInteractive {
     $sourcePath = Join-Path $base "OfficeSource"
     New-Item -ItemType Directory -Path $sourcePath | Out-Null
 
+    # ========= Build configuration.xml =========
     $excludeXml = ""
     foreach ($app in $excludeApps) { $excludeXml += "      <ExcludeApp ID=`"$app`" />`r`n" }
 
