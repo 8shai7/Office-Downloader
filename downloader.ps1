@@ -3,6 +3,32 @@
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ProgressPreference    = 'Continue'
+
+# -------------------------------
+# Console output helpers (works well with irm | iex)
+# -------------------------------
+function Say {
+    param(
+        [Parameter(Mandatory)][string] $Message,
+        [ConsoleColor] $Color = [ConsoleColor]::White
+    )
+    try {
+        Write-Host $Message -ForegroundColor $Color
+    } catch {
+        # Fallback (non-console hosts)
+        Write-Output $Message
+    }
+    try { [Console]::Out.Flush() } catch {}
+}
+
+function Ask {
+    param([Parameter(Mandatory)][string] $Prompt)
+    Say $Prompt Cyan
+    $r = Read-Host "> "
+    try { [Console]::Out.Flush() } catch {}
+    return $r
+}
 
 function Read-Choice {
     param(
@@ -10,87 +36,100 @@ function Read-Choice {
         [Parameter(Mandatory)] [hashtable] $Options,
         [string] $DefaultKey = $null
     )
-    Write-Host ""
-    Write-Host $Prompt
+
+    Say "" White
+    Say $Prompt White
+
     foreach ($k in ($Options.Keys | Sort-Object)) {
         $label = $Options[$k]
         if ($DefaultKey -and $k -eq $DefaultKey) {
-            Write-Host "  [$k] $label (default)"
+            Say ("  [{0}] {1} (default)" -f $k, $label) DarkGray
         } else {
-            Write-Host "  [$k] $label"
+            Say ("  [{0}] {1}" -f $k, $label) Gray
         }
     }
+
     while ($true) {
-        $in = Read-Host "Select"
+        $in = Ask "Select"
         if ([string]::IsNullOrWhiteSpace($in) -and $DefaultKey) { return $DefaultKey }
         if ($Options.ContainsKey($in)) { return $in }
-        Write-Host "Invalid selection. Try again."
+        Say "Invalid selection. Try again." Yellow
     }
 }
 
 function Read-YesNo {
     param([Parameter(Mandatory)] [string] $Prompt, [bool] $Default = $true)
+
     $suffix = if ($Default) { "[Y/n]" } else { "[y/N]" }
     while ($true) {
-        $in = Read-Host "$Prompt $suffix"
+        $in = Ask "$Prompt $suffix"
         if ([string]::IsNullOrWhiteSpace($in)) { return $Default }
         switch ($in.ToLowerInvariant()) {
             'y' { return $true }
             'yes' { return $true }
             'n' { return $false }
             'no' { return $false }
-            default { Write-Host "Please answer y or n." }
+            default { Say "Please answer y or n." Yellow }
         }
     }
 }
 
-function Ensure-Admin {
-    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $p  = New-Object Security.Principal.WindowsPrincipal($id)
-    if (-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Write-Host ""
-        Write-Host "Not running as Administrator."
-        Write-Host "Re-launching elevated..."
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = "powershell.exe"
-        $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -Command `"& { $($MyInvocation.MyCommand.Path) }`""
-        $psi.Verb = "runas"
-        try { [System.Diagnostics.Process]::Start($psi) | Out-Null } catch { throw "Elevation cancelled. Exiting." }
-        exit
-    }
-}
-
-# NOTE: If you run this via irm|iex there is no script file path to relaunch.
-# We'll just warn instead of forcing elevation.
 function Warn-IfNotAdmin {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
     $p  = New-Object Security.Principal.WindowsPrincipal($id)
     if (-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Write-Host ""
-        Write-Host "WARNING: Not running as Administrator."
-        Write-Host "ODT download usually works without admin, but installation often requires admin."
-        Write-Host "If install fails, rerun PowerShell as Administrator."
+        Say "" White
+        Say "WARNING: Not running as Administrator." Yellow
+        Say "ODT download usually works without admin, but installation often requires admin." Yellow
+        Say "If install fails, rerun PowerShell as Administrator." Yellow
+    } else {
+        Say "Running as Administrator." Green
     }
 }
 
+function Invoke-Exe {
+    param(
+        [Parameter(Mandatory)][string] $FilePath,
+        [Parameter(Mandatory)][string[]] $Arguments,
+        [string] $WorkingDirectory = $null,
+        [string] $StepName = $null
+    )
+
+    if ($StepName) { Say $StepName Cyan }
+    $argLine = ($Arguments | ForEach-Object { if ($_ -match '\s') { '"{0}"' -f $_ } else { $_ } }) -join ' '
+    Say ("Running: {0} {1}" -f $FilePath, $argLine) DarkGray
+
+    $old = Get-Location
+    try {
+        if ($WorkingDirectory) { Set-Location -LiteralPath $WorkingDirectory }
+        & $FilePath @Arguments
+        $exit = $LASTEXITCODE
+        if ($exit -ne 0 -and $exit -ne $null) {
+            throw "Command failed with exit code $exit: $FilePath $argLine"
+        }
+    } finally {
+        Set-Location $old
+    }
+}
+
+Say "Starting Office ODT interactive downloader/installer..." Green
 Warn-IfNotAdmin
 
 # Work folder
 $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
 New-Item -ItemType Directory -Path $base | Out-Null
 
-$odtExe  = Join-Path $base "officedeploymenttool.exe"
-$odtUrl  = "https://download.microsoft.com/download/2/7/A/27AF1BE6-DD20-4CB4-B154-EBAB8A7D4A7E/officedeploymenttool.exe"
+$odtExe     = Join-Path $base "officedeploymenttool.exe"
+$odtUrl     = "https://download.microsoft.com/download/2/7/A/27AF1BE6-DD20-4CB4-B154-EBAB8A7D4A7E/officedeploymenttool.exe"
 $odtExtract = Join-Path $base "ODT"
 New-Item -ItemType Directory -Path $odtExtract | Out-Null
 
-Write-Host ""
-Write-Host "Downloading Office Deployment Tool (ODT)..."
+Say "Downloading Office Deployment Tool (ODT)..." Yellow
 Invoke-WebRequest -Uri $odtUrl -OutFile $odtExe -UseBasicParsing
 
-Write-Host "Extracting ODT..."
+Say "Extracting ODT..." Yellow
 # /quiet /extract:<path> works for ODT self-extractor
-Start-Process -FilePath $odtExe -ArgumentList "/quiet /extract:`"$odtExtract`"" -Wait
+Invoke-Exe -FilePath $odtExe -Arguments @("/quiet", ("/extract:{0}" -f $odtExtract)) -StepName "Extracting ODT to $odtExtract"
 
 $setupExe = Join-Path $odtExtract "setup.exe"
 if (-not (Test-Path $setupExe)) {
@@ -115,6 +154,7 @@ $productId = switch ($productChoice) {
     "3" { "Standard2024Volume" }
     "4" { "VisioPro2024Volume" }
     "5" { "ProjectPro2024Volume" }
+    default { throw "Unexpected product choice: $productChoice" }
 }
 
 # Architecture
@@ -122,12 +162,11 @@ $archChoice = Read-Choice -Prompt "Choose architecture:" -Options @{ "1"="64-bit
 $arch = if ($archChoice -eq "2") { "32" } else { "64" }
 
 # Language
-$langIn = Read-Host "Language (e.g. en-us, he-il). Leave blank for en-us"
+$langIn = Ask "Language (e.g. en-us, he-il). Leave blank for en-us"
 $lang = if ([string]::IsNullOrWhiteSpace($langIn)) { "en-us" } else { $langIn.Trim() }
 
 # Channel (Microsoft 365 Apps)
 $channel = "Current"
-$channelChoice = $null
 if ($productId -eq "O365ProPlusRetail") {
     $channelChoice = Read-Choice -Prompt "Choose update channel:" -Options @{
         "1"="Current"
@@ -135,11 +174,13 @@ if ($productId -eq "O365ProPlusRetail") {
         "3"="SemiAnnual"
         "4"="Beta"
     } -DefaultKey "2"
+
     $channel = switch ($channelChoice) {
         "1" { "Current" }
         "2" { "MonthlyEnterprise" }
         "3" { "SemiAnnual" }
         "4" { "Beta" }
+        default { throw "Unexpected channel choice: $channelChoice" }
     }
 } else {
     # LTSC/Volume products generally use PerpetualVL2024 channel
@@ -147,21 +188,21 @@ if ($productId -eq "O365ProPlusRetail") {
 }
 
 # Exact version/build (optional)
-Write-Host ""
-Write-Host "Exact Version is optional."
-Write-Host "Examples (build numbers vary): 16.0.17xxxx.xxxxx"
-$verIn = Read-Host "Enter exact Version build (or leave blank to let ODT pick latest for the channel)"
+Say "" White
+Say "Exact Version is optional." Gray
+Say "Examples (build numbers vary): 16.0.17xxxx.xxxxx" Gray
+$verIn = Ask "Enter exact Version build (or leave blank to let ODT pick latest for the channel)"
 $version = if ([string]::IsNullOrWhiteSpace($verIn)) { $null } else { $verIn.Trim() }
 
 # Exclude apps selection (Word/Excel/etc.)
 $appList = @("Access","Excel","Groove","Lync","OneDrive","OneNote","Outlook","PowerPoint","Publisher","Teams","Word")
-Write-Host ""
-Write-Host "Select which apps to EXCLUDE."
-Write-Host "Type comma-separated numbers to exclude (or blank to exclude nothing)."
+Say "" White
+Say "Select which apps to EXCLUDE." White
+Say "Type comma-separated numbers to exclude (or blank to exclude nothing)." Gray
 for ($i=0; $i -lt $appList.Count; $i++) {
-    "{0,2}) {1}" -f ($i+1), $appList[$i] | Write-Host
+    Say ("{0,2}) {1}" -f ($i+1), $appList[$i]) Gray
 }
-$excludeIn = Read-Host "Exclude which? (e.g. 1,6,11) or blank"
+$excludeIn = Ask "Exclude which? (e.g. 1,6,11) or blank"
 $excludeApps = @()
 if (-not [string]::IsNullOrWhiteSpace($excludeIn)) {
     $nums = $excludeIn.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' }
@@ -221,30 +262,31 @@ $configXml += @"
 $configPath = Join-Path $base "configuration.xml"
 $configXml | Out-File -FilePath $configPath -Encoding UTF8 -Force
 
-Write-Host ""
-Write-Host "============================================================"
-Write-Host "Configuration written to:"
-Write-Host "  $configPath"
-Write-Host "Office source will download to:"
-Write-Host "  $sourcePath"
-Write-Host "ODT folder:"
-Write-Host "  $odtExtract"
-Write-Host "============================================================"
-Write-Host ""
-Write-Host "Starting download: setup.exe /download configuration.xml"
-Start-Process -FilePath $setupExe -WorkingDirectory $odtExtract -ArgumentList "/download `"$configPath`"" -Wait
+Say "" White
+Say "============================================================" DarkGray
+Say "Configuration written to:" White
+Say "  $configPath" Gray
+Say "Office source will download to:" White
+Say "  $sourcePath" Gray
+Say "ODT folder:" White
+Say "  $odtExtract" Gray
+Say "============================================================" DarkGray
+Say "" White
 
-Write-Host ""
-Write-Host "Download completed."
+Say "Starting download: setup.exe /download configuration.xml" Yellow
+Invoke-Exe -FilePath $setupExe -WorkingDirectory $odtExtract -Arguments @("/download", $configPath) -StepName "Downloading Office content..."
+
+Say "" White
+Say "Download completed." Green
 
 if ($doInstall) {
-    Write-Host ""
-    Write-Host "Starting install/configure: setup.exe /configure configuration.xml"
-    Start-Process -FilePath $setupExe -WorkingDirectory $odtExtract -ArgumentList "/configure `"$configPath`"" -Wait
-    Write-Host ""
-    Write-Host "Install/configure completed."
+    Say "" White
+    Say "Starting install/configure: setup.exe /configure configuration.xml" Yellow
+    Invoke-Exe -FilePath $setupExe -WorkingDirectory $odtExtract -Arguments @("/configure", $configPath) -StepName "Installing/Configuring Office..."
+    Say "" White
+    Say "Install/configure completed." Green
 }
 
-Write-Host ""
-Write-Host "Done. Logs (if any) are in:"
-Write-Host "  $base"
+Say "" White
+Say "Done. Logs (if any) are in:" White
+Say "  $base" Gray
