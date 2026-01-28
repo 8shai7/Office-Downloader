@@ -265,7 +265,6 @@ function Start-OfficeODTInteractive {
 $excludeXml    </Product>
   </Add>
   <Updates Enabled="TRUE" Channel="$channel" />
-  <Display Level="Full" AcceptEULA="TRUE" />
   <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
 "@
 
