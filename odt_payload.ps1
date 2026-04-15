@@ -1,6 +1,6 @@
 # odt_payload.ps1
-# Office ODT High-Speed Installer - Final Developer Edition
-# Fix: Using curl.exe for reliable binary downloads
+# VERSION: 2.1 (Curl Edition)
+# Optimized for Shai Tal
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -51,10 +51,9 @@ function Start-OfficeODTInteractive {
         param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
         if (-not (Test-Path $FilePath)) { throw "Error: $FilePath not found." }
         
-        # אימות Magic Bytes למניעת הרצת דפי HTML
         $bytes = Get-Content $FilePath -Encoding Byte -TotalCount 2 -ErrorAction SilentlyContinue
         if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
-            throw "The downloaded file is NOT a valid executable. Curl failed to fetch the binary."
+            throw "The downloaded file is NOT a valid executable (Header check failed)."
         }
 
         $old = Get-Location
@@ -65,7 +64,7 @@ function Start-OfficeODTInteractive {
         } finally { Set-Location $old }
     }
 
-    Say "--- Office ODT High-Speed Installer (Curl Version) ---" Green
+    Say "--- Office ODT High-Speed Installer (CURL EDITION v2.1) ---" Green
     
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     $odtExtract = Join-Path $base "ODT"
@@ -74,8 +73,8 @@ function Start-OfficeODTInteractive {
 
     $odtExe = Join-Path $base "odt_setup.exe"
     
-    # שימוש ב-curl עם דגל -L לעקיפת ה-Redirects של מיקרוסופט
-    Say "Fetching ODT Engine using curl..." Yellow
+    Say "Fetching ODT Engine using system curl..." Yellow
+    # שימוש ב-curl.exe כדי לעקוף את מנגנון ה-Redirects של PowerShell
     & curl.exe -L -o $odtExe "https://aka.ms/ODT" 2>$null
 
     Say "Extracting ODT..." Yellow
@@ -83,7 +82,6 @@ function Start-OfficeODTInteractive {
     
     $setupExe = (Get-ChildItem -Path $odtExtract -Filter "setup.exe" -File -Recurse | Select-Object -First 1).FullName
 
-    # --- הגדרות התקנה ---
     $productOptions = @{ "1"="M365 Apps"; "2"="Office 2024 LTSC Pro"; "3"="Office 2024 LTSC Std" }
     $productChoice = Read-Choice "Product:" $productOptions "1"
     $productId = switch($productChoice){"1"{"O365ProPlusRetail"}"2"{"ProPlus2024Volume"}"3"{"Standard2024Volume"}}
@@ -105,11 +103,10 @@ function Start-OfficeODTInteractive {
 "@
     $xml | Out-File -FilePath $configPath -Encoding UTF8
 
-    # מצב Streaming - הורדה והתקנה במקביל
-    Say "Starting High-Speed Installation..." Green
+    Say "Starting High-Speed Installation (Streaming)..." Green
     Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory $odtExtract
 
-    Say "Done! Clean-up folder: $base" Green
+    Say "Done! Files: $base" Green
 }
 
 Start-OfficeODTInteractive
