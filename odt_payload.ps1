@@ -1,6 +1,6 @@
 # odt_payload.ps1
-# Office ODT High-Speed Installer - Curl Edition
-# Fixed: Download redirection issues using curl.exe
+# Office ODT High-Speed Installer - Final Developer Edition
+# Fix: Using curl.exe for reliable binary downloads
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -51,10 +51,10 @@ function Start-OfficeODTInteractive {
         param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
         if (-not (Test-Path $FilePath)) { throw "Error: $FilePath not found." }
         
-        # אימות Magic Bytes 'MZ' למניעת הרצת קבצי HTML
+        # אימות Magic Bytes למניעת הרצת דפי HTML
         $bytes = Get-Content $FilePath -Encoding Byte -TotalCount 2 -ErrorAction SilentlyContinue
         if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
-            throw "Critical Error: The downloaded file is NOT a valid executable. It might be an HTML error page."
+            throw "The downloaded file is NOT a valid executable. Curl failed to fetch the binary."
         }
 
         $old = Get-Location
@@ -65,7 +65,7 @@ function Start-OfficeODTInteractive {
         } finally { Set-Location $old }
     }
 
-    Say "--- Office ODT High-Speed Installer (Fixed) ---" Green
+    Say "--- Office ODT High-Speed Installer (Curl Version) ---" Green
     
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     $odtExtract = Join-Path $base "ODT"
@@ -74,9 +74,9 @@ function Start-OfficeODTInteractive {
 
     $odtExe = Join-Path $base "odt_setup.exe"
     
-    # שימוש ב-curl.exe עם דגל -L (Follow Redirects) - השיטה הכי אמינה להורדה ממיקרוסופט
-    Say "Downloading ODT Engine using curl..." Yellow
-    curl.exe -L -o $odtExe "https://aka.ms/ODT" 2>$null
+    # שימוש ב-curl עם דגל -L לעקיפת ה-Redirects של מיקרוסופט
+    Say "Fetching ODT Engine using curl..." Yellow
+    & curl.exe -L -o $odtExe "https://aka.ms/ODT" 2>$null
 
     Say "Extracting ODT..." Yellow
     Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:{0}" -f $odtExtract))
@@ -105,10 +105,11 @@ function Start-OfficeODTInteractive {
 "@
     $xml | Out-File -FilePath $configPath -Encoding UTF8
 
-    Say "Starting Installation (Streaming Mode)..." Green
+    # מצב Streaming - הורדה והתקנה במקביל
+    Say "Starting High-Speed Installation..." Green
     Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory $odtExtract
 
-    Say "Done! Files: $base" Green
+    Say "Done! Clean-up folder: $base" Green
 }
 
 Start-OfficeODTInteractive
