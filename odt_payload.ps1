@@ -1,7 +1,6 @@
 # odt_payload.ps1
-# VERSION: 2.3 (The "Direct Hit" Edition)
-# Optimized for Shai Tal
-# Fix: Using absolute CDN URL to bypass redirection loops
+# VERSION: 2.4 (The "Browser-Mimic" Edition)
+# Fixed: 404 Error by using resilient redirect handling with Browser UserAgent
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -52,28 +51,26 @@ function Start-OfficeODTInteractive {
         param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
         if (-not (Test-Path $FilePath)) { throw "Error: $FilePath not found." }
         
-        # בדיקת Magic Bytes (חתימת EXE) - תואם לכל גרסאות PowerShell
-        $fileStream = New-Object System.IO.FileStream($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read)
-        $bytes = New-Object byte[] 2
-        $fileStream.Read($bytes, 0, 2) | Out-Null
-        $fileStream.Close()
+        # אימות חתימת EXE (Magic Bytes MZ)
+        $fs = New-Object System.IO.FileStream($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read)
+        $b = New-Object byte[] 2
+        $fs.Read($b, 0, 2) | Out-Null
+        $fs.Close()
 
-        if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
-            Say "DEBUG: File content starts with: $([System.Text.Encoding]::ASCII.GetString($bytes))" Yellow
-            $contentSample = Get-Content $FilePath -TotalCount 5
-            Say "DEBUG: First lines of file: $contentSample" Gray
-            throw "The downloaded file is NOT a valid Windows executable. It appears to be an HTML or Text file."
+        if ($b[0] -ne 0x4D -or $b[1] -ne 0x5A) {
+            Say "DEBUG: File starts with: $([System.Text.Encoding]::ASCII.GetString($b))" Red
+            throw "The downloaded file is NOT a valid EXE (Header check failed). Check network filters."
         }
 
         $old = Get-Location
         try {
-            if ($WorkingDirectory) { Set-Location $FilePath }
+            if ($WorkingDirectory) { Set-Location $WorkingDirectory }
             $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -WindowStyle Hidden
             $p.WaitForExit()
         } finally { Set-Location $old }
     }
 
-    Say "--- Office ODT High-Speed Installer (v2.3 - CDN DIRECT) ---" Green
+    Say "--- Office ODT High-Speed Installer (v2.4 - FINAL BYPASS) ---" Green
     
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     $odtExtract = Join-Path $base "ODT"
@@ -82,17 +79,24 @@ function Start-OfficeODTInteractive {
 
     $odtExe = Join-Path $base "odt_setup.exe"
     
-    # שימוש בקישור ישיר ל-CDN של מיקרוסופט (עוקף את aka.ms)
-    $cdnUrl = "https://download.microsoft.com/download/2/7/A/27AF1BE6-DD20-4CB4-B154-EBAB4551408F/officedeploymenttool_17328-20162.exe"
+    # שימוש ב-UserAgent של Chrome כדי למנוע ממיקרוסופט להגיש דף 404 ל-"בוטים"
+    $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     
-    Say "Fetching ODT Engine from Direct CDN..." Yellow
-    & curl.exe -sSL -o $odtExe $cdnUrl 2>$null
+    Say "Downloading ODT Engine (Redirect-Safe Mode)..." Yellow
+    try {
+        # ה-aka.ms/ODT תמיד מפנה לגרסה האחרונה. אנחנו נותנים ל-PowerShell לנהל את ה-Redirect.
+        Invoke-WebRequest -Uri "https://aka.ms/ODT" -OutFile $odtExe -UserAgent $ua -UseBasicParsing
+    } catch {
+        Say "Primary download failed. Trying Curl as backup..." Yellow
+        & curl.exe -L -A $ua -o $odtExe "https://aka.ms/ODT" 2>$null
+    }
 
     Say "Extracting ODT..." Yellow
     Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:$odtExtract"))
     
     $setupExe = (Get-ChildItem -Path $odtExtract -Filter "setup.exe" -File -Recurse | Select-Object -First 1).FullName
 
+    # --- תהליך התקנה ---
     $productOptions = @{ "1"="M365 Apps"; "2"="Office 2024 LTSC Pro"; "3"="Office 2024 LTSC Std" }
     $productChoice = Read-Choice "Product:" $productOptions "1"
     $productId = switch($productChoice){"1"{"O365ProPlusRetail"}"2"{"ProPlus2024Volume"}"3"{"Standard2024Volume"}}
@@ -117,7 +121,7 @@ function Start-OfficeODTInteractive {
     Say "Starting High-Speed Installation (Streaming Mode)..." Green
     Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory $odtExtract
 
-    Say "Success! All temporary files are in: $base" Green
+    Say "Success! ODT workflow completed. Logs at: $base" Green
 }
 
 Start-OfficeODTInteractive
