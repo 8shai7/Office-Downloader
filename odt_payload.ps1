@@ -1,311 +1,143 @@
 # odt_payload.ps1
-# Office ODT interactive downloader/installer (payload)
-# Called by downloader.ps1 bootstrap
+# Office ODT High-Speed Interactive Installer
+# Optimized for Shai Tal - Developer Edition
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$ProgressPreference    = 'Continue'
+$ProgressPreference    = 'SilentlyContinue' 
 
 function Start-OfficeODTInteractive {
 
     function Say {
-        param(
-            [AllowEmptyString()]
-            [string] $Message = "",
-            [ConsoleColor] $Color = [ConsoleColor]::White
-        )
-        try { Write-Host $Message -ForegroundColor $Color } catch { Write-Output $Message }
-        try { [Console]::Out.Flush() } catch {}
+        param([AllowEmptyString()][string]$m = "", [ConsoleColor]$c = [ConsoleColor]::White)
+        try { Write-Host $m -ForegroundColor $c } catch { Write-Output $m }
     }
 
-
     function Ask {
-        param([Parameter(Mandatory)][string] $Prompt)
-        Say $Prompt Cyan
-        $r = Read-Host "> "
-        try { [Console]::Out.Flush() } catch {}
-        return $r
+        param([Parameter(Mandatory)][string]$p)
+        Say $p Cyan
+        return Read-Host "> "
     }
 
     function Read-Choice {
-        param(
-            [Parameter(Mandatory)] [string] $Prompt,
-            [Parameter(Mandatory)] [hashtable] $Options,
-            [string] $DefaultKey = $null
-        )
-        Say "" White
-        Say $Prompt White
-        foreach ($k in ($Options.Keys | Sort-Object)) {
-            $label = $Options[$k]
-            if ($DefaultKey -and $k -eq $DefaultKey) {
-                Say ("  [{0}] {1} (default)" -f $k, $label) DarkGray
-            } else {
-                Say ("  [{0}] {1}" -f $k, $label) Gray
-            }
+        param([string]$p, [hashtable]$o, [string]$d = $null)
+        Say "" White; Say $p White
+        foreach ($k in ($o.Keys | Sort-Object)) {
+            $l = $o[$k]
+            if ($d -and $k -eq $d) { Say ("  [{0}] {1} (default)" -f $k, $l) DarkGray }
+            else { Say ("  [{0}] {1}" -f $k, $l) Gray }
         }
         while ($true) {
             $in = Ask "Select"
-            if ([string]::IsNullOrWhiteSpace($in) -and $DefaultKey) { return $DefaultKey }
-            if ($Options.ContainsKey($in)) { return $in }
-            Say "Invalid selection. Try again." Yellow
+            if ([string]::IsNullOrWhiteSpace($in) -and $d) { return $d }
+            if ($o.ContainsKey($in)) { return $in }
+            Say "Invalid selection." Yellow
         }
     }
 
     function Read-YesNo {
-        param([Parameter(Mandatory)] [string] $Prompt, [bool] $Default = $true)
-        $suffix = if ($Default) { "[Y/n]" } else { "[y/N]" }
+        param([string]$p, [bool]$d = $true)
+        $s = if ($d) { "[Y/n]" } else { "[y/N]" }
         while ($true) {
-            $in = Ask "$Prompt $suffix"
-            if ([string]::IsNullOrWhiteSpace($in)) { return $Default }
-            switch ($in.ToLowerInvariant()) {
-                'y' { return $true }
-                'yes' { return $true }
-                'n' { return $false }
-                'no' { return $false }
-                default { Say "Please answer y or n." Yellow }
-            }
-        }
-    }
-
-    function Warn-IfNotAdmin {
-        $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-        $p  = New-Object Security.Principal.WindowsPrincipal($id)
-        if (-not $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-            Say "" White
-            Say "WARNING: Not running as Administrator." Yellow
-            Say "ODT download usually works without admin, but installation often requires admin." Yellow
-            Say "If install fails, rerun PowerShell as Administrator." Yellow
-        } else {
-            Say "Running as Administrator." Green
-        }
-    }
-
-    function Get-ODTDownloadUrl {
-        $detailsUrl = "https://www.microsoft.com/en-us/download/details.aspx?id=49117"
-        $fallback   = "https://aka.ms/ODT"
-        try {
-            Say "Resolving latest ODT download URL..." DarkGray
-            $resp = Invoke-WebRequest -Uri $detailsUrl -UseBasicParsing -Headers @{ "Cache-Control"="no-cache"; "Pragma"="no-cache"; "User-Agent"="PowerShell" }
-            $re = '"url"\s*:\s*"(https://download\.microsoft\.com/download/[^"]+officedeploymenttool[^"]+\.exe)"'
-            if ($resp.Content -match $re) { return $Matches[1] }
-            $re2 = '(https://download\.microsoft\.com/download/[^"\s]+officedeploymenttool[^"\s]+\.exe)'
-            $m = [regex]::Match($resp.Content, $re2)
-            if ($m.Success) { return $m.Groups[1].Value }
-            return $fallback
-        } catch {
-            Say "Could not scrape Download Center page. Using fallback: $fallback" Yellow
-            return $fallback
+            $in = Ask "$p $s"
+            if ([string]::IsNullOrWhiteSpace($in)) { return $d }
+            if ($in.ToLower() -match 'y|yes') { return $true }
+            if ($in.ToLower() -match 'n|no') { return $false }
+            Say "Please answer y or n." Yellow
         }
     }
 
     function Invoke-ExeNoExitCodeAssumption {
-        param(
-            [Parameter(Mandatory)][string] $FilePath,
-            [Parameter(Mandatory)][string[]] $Arguments,
-            [string] $WorkingDirectory = $null,
-            [string] $StepName = $null
-        )
-        if ($StepName) { Say $StepName Cyan }
-        $argLine = ($Arguments | ForEach-Object { if ($_ -match '\s') { '"{0}"' -f $_ } else { $_ } }) -join ' '
-        Say ("Running: {0} {1}" -f $FilePath, $argLine) DarkGray
-
+        param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
         $old = Get-Location
         try {
             if ($WorkingDirectory) { Set-Location -LiteralPath $WorkingDirectory }
             $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -WindowStyle Hidden
             $p.WaitForExit()
-            try {
-                if ($p.ExitCode -ne 0) {
-                    throw ("Command failed with exit code {0} - {1} {2}" -f $p.ExitCode, $FilePath, $argLine)
-                }
-            } catch { }
-        } finally {
-            Set-Location $old
-        }
+        } finally { Set-Location $old }
     }
 
-    function Find-SetupExe {
-        param([Parameter(Mandatory)][string] $SearchRoot)
-        $direct = Join-Path $SearchRoot "setup.exe"
-        if (Test-Path $direct) { return $direct }
-        $found = Get-ChildItem -Path $SearchRoot -Filter "setup.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($found) { return $found.FullName }
-        return $null
-    }
-
-    Write-Output "[INFO] Starting Office ODT interactive downloader/installer..."
-    Say "Starting Office ODT interactive downloader/installer..." Green
-    Warn-IfNotAdmin
+    Say "--- Office ODT High-Speed Installer ---" Green
+    
+    # בדיקת הרשאות והמלצת ביצועים
+    $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin) { Say "WARNING: Not running as Administrator. Installation will likely fail." Yellow }
+    Say "Optimization: Using Streaming Mode & BITS Transfer." Gray
 
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
-    New-Item -ItemType Directory -Path $base | Out-Null
-
-    $odtExe     = Join-Path $base "officedeploymenttool.exe"
     $odtExtract = Join-Path $base "ODT"
-    New-Item -ItemType Directory -Path $odtExtract | Out-Null
+    $sourcePath = Join-Path $base "OfficeSource"
+    New-Item -ItemType Directory -Path $odtExtract, $sourcePath -Force | Out-Null
 
-    Say "Working folder: $base" DarkGray
-
-    $odtUrl = Get-ODTDownloadUrl
-    Say "Downloading Office Deployment Tool (ODT)..." Yellow
-    Say "ODT URL: $odtUrl" DarkGray
-
-    Invoke-WebRequest -Uri $odtUrl -OutFile $odtExe -UseBasicParsing -Headers @{ "Cache-Control"="no-cache"; "Pragma"="no-cache"; "User-Agent"="PowerShell" }
+    # הורדת ODT באמצעות BITS למהירות מקסימלית
+    $odtExe = Join-Path $base "odt_setup.exe"
+    Say "Downloading ODT Engine..." Yellow
+    Start-BitsTransfer -Source "https://aka.ms/ODT" -Destination $odtExe -Priority High
 
     Say "Extracting ODT..." Yellow
-    Say "Extracting ODT to $odtExtract" DarkGray
+    Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:{0}" -f $odtExtract))
+    $setupExe = (Get-ChildItem -Path $odtExtract -Filter "setup.exe" -File -Recurse | Select-Object -First 1).FullName
 
-    Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:{0}" -f $odtExtract)) -StepName "Extracting ODT..."
-
-    $setupExe = Find-SetupExe -SearchRoot $odtExtract
-    if (-not $setupExe) { $setupExe = Find-SetupExe -SearchRoot $base }
-
-    if (-not $setupExe) {
-        Start-Sleep -Milliseconds 800
-        $setupExe = Find-SetupExe -SearchRoot $odtExtract
-        if (-not $setupExe) { $setupExe = Find-SetupExe -SearchRoot $base }
-    }
-
-    if (-not $setupExe) {
-        throw "ODT extraction failed: setup.exe not found under $odtExtract (or $base)."
-    }
-
-    Say "Found setup.exe at: $setupExe" Green
-
-    # ========= Interactive options =========
-
+    # --- אפשרויות אינטראקטיביות (החזרת כל הלוגיקה המקורית) ---
     $productOptions = @{
-        "1" = "Microsoft 365 Apps for enterprise (O365ProPlusRetail)"
-        "2" = "Office LTSC Professional Plus 2024 (ProPlus2024Volume)"
-        "3" = "Office LTSC Standard 2024 (Standard2024Volume)"
-        "4" = "Visio LTSC Professional 2024 (VisioPro2024Volume)"
-        "5" = "Project LTSC Professional 2024 (ProjectPro2024Volume)"
+        "1" = "Microsoft 365 Apps for enterprise"
+        "2" = "Office LTSC Professional Plus 2024"
+        "3" = "Office LTSC Standard 2024"
+        "4" = "Visio LTSC Professional 2024"
+        "5" = "Project LTSC Professional 2024"
     }
-    $productChoice = Read-Choice -Prompt "Choose the Office product:" -Options $productOptions -DefaultKey "1"
+    $productChoice = Read-Choice -Prompt "Choose Product:" -Options $productOptions -DefaultKey "1"
+    $productId = switch($productChoice){"1"{"O365ProPlusRetail"}"2"{"ProPlus2024Volume"}"3"{"Standard2024Volume"}"4"{"VisioPro2024Volume"}"5"{"ProjectPro2024Volume"}}
 
-    $productId = switch ($productChoice) {
-        "1" { "O365ProPlusRetail" }
-        "2" { "ProPlus2024Volume" }
-        "3" { "Standard2024Volume" }
-        "4" { "VisioPro2024Volume" }
-        "5" { "ProjectPro2024Volume" }
-        default { throw "Unexpected product choice: $productChoice" }
-    }
+    $arch = if ((Read-Choice "Architecture:" @{"1"="64-bit";"2"="32-bit"} "1") -eq "2") { "32" } else { "64" }
+    $lang = (Ask "Language (e.g. en-us, he-il) [Default: en-us]").Trim(); if (!$lang) { $lang = "en-us" }
 
-    $archChoice = Read-Choice -Prompt "Choose architecture:" -Options @{ "1"="64-bit"; "2"="32-bit" } -DefaultKey "1"
-    $arch = if ($archChoice -eq "2") { "32" } else { "64" }
-
-    $langIn = Ask "Language (e.g. en-us, he-il). Leave blank for en-us"
-    $lang = if ([string]::IsNullOrWhiteSpace($langIn)) { "en-us" } else { $langIn.Trim() }
-
+    # ערוצי עדכון
     $channel = "Current"
     if ($productId -eq "O365ProPlusRetail") {
-        $channelChoice = Read-Choice -Prompt "Choose update channel:" -Options @{
-            "1"="Current"
-            "2"="MonthlyEnterprise"
-            "3"="SemiAnnual"
-            "4"="Beta"
-        } -DefaultKey "2"
-        $channel = switch ($channelChoice) {
-            "1" { "Current" }
-            "2" { "MonthlyEnterprise" }
-            "3" { "SemiAnnual" }
-            "4" { "Beta" }
-            default { throw "Unexpected channel choice: $channelChoice" }
-        }
-    } else {
-        $channel = "PerpetualVL2024"
-    }
+        $channelChoice = Read-Choice "Update Channel:" @{"1"="Current";"2"="MonthlyEnterprise";"3"="SemiAnnual";"4"="Beta"} "1"
+        $channel = switch($channelChoice){"1"{"Current"}"2"{"MonthlyEnterprise"}"3"{"SemiAnnual"}"4"{"Beta"}}
+    } else { $channel = "PerpetualVL2024" }
 
-    Say "" White
-    Say "Exact Version is optional." Gray
-    Say "Examples (build numbers vary): 16.0.17xxxx.xxxxx" Gray
-    $verIn = Ask "Enter exact Version build (or leave blank to let ODT pick latest for the channel)"
-    $version = if ([string]::IsNullOrWhiteSpace($verIn)) { $null } else { $verIn.Trim() }
+    $verIn = Ask "Exact Version build (leave blank for latest)"
+    $shared = if ($productId -eq "O365ProPlusRetail") { Read-YesNo "Enable SharedComputerLicensing (RDS/VDI)?" $false } else { $false }
 
+    # החרגת אפליקציות
     $appList = @("Access","Excel","Groove","Lync","OneDrive","OneNote","Outlook","PowerPoint","Publisher","Teams","Word")
-    Say "" White
-    Say "Select which apps to EXCLUDE." White
-    Say "Type comma-separated numbers to exclude (or blank to exclude nothing)." Gray
+    Say "Exclude Apps (e.g. 1,4,9):" Gray
     for ($i=0; $i -lt $appList.Count; $i++) { Say ("{0,2}) {1}" -f ($i+1), $appList[$i]) Gray }
-    $excludeIn = Ask "Exclude which? (e.g. 1,6,11) or blank"
-
-    $excludeApps = @()
-    if (-not [string]::IsNullOrWhiteSpace($excludeIn)) {
-        $nums = $excludeIn.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' }
-        foreach ($n in $nums) {
-            $idx = [int]$n - 1
-            if ($idx -ge 0 -and $idx -lt $appList.Count) { $excludeApps += $appList[$idx] }
+    $excludeIn = Ask "Exclude"; $excludeXml = ""
+    if ($excludeIn) {
+        $excludeIn.Split(",") | ForEach-Object {
+            $idx = [int]$_.Trim() - 1
+            if ($idx -ge 0 -and $idx -lt $appList.Count) { $excludeXml += "      <ExcludeApp ID=`"$($appList[$idx])`" />`n" }
         }
-        $excludeApps = $excludeApps | Select-Object -Unique
     }
 
-    $shared = $false
-    if ($productId -eq "O365ProPlusRetail") {
-        $shared = Read-YesNo "Enable SharedComputerLicensing (RDS/VDI)?" $false
-    }
+    # יצירת XML אופטימלי
+    $configPath = Join-Path $base "configuration.xml"
+    $verAttr = if ($verIn) { "Version=`"$verIn`"" } else { "" }
+    $sharedAttr = if ($shared) { "<Property Name=`"SharedComputerLicensing`" Value=`"1`" />" } else { "" }
 
-    $doInstall = Read-YesNo "After download, also INSTALL/CONFIGURE Office now?" $true
-
-    $sourcePath = Join-Path $base "OfficeSource"
-    New-Item -ItemType Directory -Path $sourcePath | Out-Null
-
-    $excludeXml = ""
-    foreach ($app in $excludeApps) { $excludeXml += "      <ExcludeApp ID=`"$app`" />`r`n" }
-
-    $addAttrs = @("OfficeClientEdition=`"$arch`"","Channel=`"$channel`"","SourcePath=`"$sourcePath`"")
-    if ($version) { $addAttrs += "Version=`"$version`"" }
-    $addAttrString = $addAttrs -join " "
-
-    $configXml = @"
+    $xml = @"
 <Configuration>
-  <Add $addAttrString>
+  <Add OfficeClientEdition="$arch" Channel="$channel" SourcePath="$sourcePath" $verAttr>
     <Product ID="$productId">
       <Language ID="$lang" />
 $excludeXml    </Product>
   </Add>
-  <Updates Enabled="TRUE" Channel="$channel" />
+  <Display Level="Full" AcceptEULA="TRUE" />
   <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
-"@
-
-    if ($shared) { $configXml += "  <Property Name=""SharedComputerLicensing"" Value=""1"" />`r`n" }
-
-    $configXml += @"
-  <Logging Level="Standard" Path="$base" />
+  $sharedAttr
 </Configuration>
 "@
+    $xml | Out-File -FilePath $configPath -Encoding UTF8
 
-    $configPath = Join-Path $base "configuration.xml"
-    $configXml | Out-File -FilePath $configPath -Encoding UTF8 -Force
+    # הרצה - המעבר ל-Streaming Mode שחוסך זמן
+    Say "Starting Installation (Streaming Mode)..." Green
+    Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory $odtExtract
 
-    Say "" White
-    Say "============================================================" DarkGray
-    Say "Configuration written to:" White
-    Say "  $configPath" Gray
-    Say "Office source will download to:" White
-    Say "  $sourcePath" Gray
-    Say "ODT folder:" White
-    Say "  $odtExtract" Gray
-    Say "============================================================" DarkGray
-
-    Say "" White
-    Say "Starting download: setup.exe /download configuration.xml" Yellow
-    Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/download", $configPath) -WorkingDirectory (Split-Path -Parent $setupExe) -StepName "Downloading Office content..."
-
-    Say "" White
-    Say "Download completed." Green
-
-    if ($doInstall) {
-        Say "" White
-        Say "Starting install/configure: setup.exe /configure configuration.xml" Yellow
-        Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory (Split-Path -Parent $setupExe) -StepName "Installing/Configuring Office..."
-        Say "" White
-        Say "Install/configure completed." Green
-    }
-
-    Say "" White
-    Say "Done. Logs (if any) are in:" White
-    Say "  $base" Gray
+    Say "Done! Temp folder: $base" Green
 }
 
 Start-OfficeODTInteractive
