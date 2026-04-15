@@ -1,6 +1,7 @@
 # odt_payload.ps1
-# VERSION: 2.5 (The "Scraper" Edition)
-# Fixed: Network filter interception by scraping the landing page for the real link.
+# VERSION: 3.0 (The "Original Scraper" Hybrid)
+# Optimized for Shai Tal - Developer/Instructor
+# Combination of original scraping logic and high-speed streaming installation.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -35,15 +36,27 @@ function Start-OfficeODTInteractive {
         }
     }
 
-    function Read-YesNo {
-        param([string]$p, [bool]$d = $true)
-        $s = if ($d) { "[Y/n]" } else { "[y/N]" }
-        while ($true) {
-            $in = Ask "$p $s"
-            if ([string]::IsNullOrWhiteSpace($in)) { return $d }
-            if ($in.ToLower() -match 'y|yes') { return $true }
-            if ($in.ToLower() -match 'n|no') { return $false }
-            Say "Please answer y or n." Yellow
+    function Get-ODTDownloadUrl {
+        # הלינק והלוגיקה המקורית מהקובץ הראשון שלך
+        $detailsUrl = "https://www.microsoft.com/en-us/download/details.aspx?id=49117"
+        $fallback   = "https://aka.ms/ODT"
+        $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        
+        try {
+            Say "Scraping Microsoft Download Center (Original Method)..." Yellow
+            $resp = Invoke-WebRequest -Uri $detailsUrl -UseBasicParsing -Headers @{ "Cache-Control"="no-cache"; "User-Agent"=$ua }
+            
+            # הרג'קס המקורי שלך
+            $re = '"url"\s*:\s*"(https://download\.microsoft\.com/download/[^"]+officedeploymenttool[^"]+\.exe)"'
+            if ($resp.Content -match $re) { return $Matches[1] }
+            
+            $re2 = '(https://download\.microsoft\.com/download/[^"\s]+officedeploymenttool[^"\s]+\.exe)'
+            $m = [regex]::Match($resp.Content, $re2)
+            if ($m.Success) { return $m.Groups[1].Value }
+            
+            return $fallback
+        } catch {
+            return $fallback
         }
     }
 
@@ -51,28 +64,22 @@ function Start-OfficeODTInteractive {
         param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
         if (-not (Test-Path $FilePath)) { throw "Error: $FilePath not found." }
         
+        # וידוא שמדובר ב-EXE תקין
         $fs = New-Object System.IO.FileStream($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read)
-        $b = New-Object byte[] 2
-        $fs.Read($b, 0, 2) | Out-Null
-        $fs.Close()
-
+        $b = New-Object byte[] 2; $fs.Read($b, 0, 2) | Out-Null; $fs.Close()
         if ($b[0] -ne 0x4D -or $b[1] -ne 0x5A) {
-            $sample = Get-Content $FilePath -TotalCount 1
-            Say "INTERCEPTED: The network returned HTML instead of a file." Red
-            Say "Content starts with: $sample" Gray
-            return $false
+            throw "The downloaded file is NOT a valid executable (Header Check Failed)."
         }
-        
+
         $old = Get-Location
         try {
             if ($WorkingDirectory) { Set-Location $WorkingDirectory }
             $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -WindowStyle Hidden
             $p.WaitForExit()
-            return $true
         } finally { Set-Location $old }
     }
 
-    Say "--- Office ODT High-Speed Installer (v2.5 - SCRAPER) ---" Green
+    Say "--- Office ODT High-Speed Installer (v3.0) ---" Green
     
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     $odtExtract = Join-Path $base "ODT"
@@ -80,37 +87,17 @@ function Start-OfficeODTInteractive {
     New-Item -ItemType Directory -Path $odtExtract, $sourcePath -Force | Out-Null
     $odtExe = Join-Path $base "odt_setup.exe"
     
-    $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    $targetUrl = "https://aka.ms/ODT"
-
-    Say "Attempting Download..." Yellow
-    Invoke-WebRequest -Uri $targetUrl -OutFile $odtExe -UserAgent $ua -UseBasicParsing
-
-    # בדיקה אם הורדנו EXE או דף חסימה
-    if (-not (Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/?") )) {
-        Say "Scraping HTML for hidden download link..." Yellow
-        $html = Get-Content $odtExe -Raw
-        # חיפוש לינק EXE בתוך ה-HTML שירד (Regex לחיפוש הורדה ישירה של מיקרוסופט)
-        if ($html -match '(https://download\.microsoft\.com/[^"]+officedeploymenttool[^"]+\.exe)') {
-            $scrapedUrl = $Matches[1]
-            Say "Found hidden link: $scrapedUrl" Gray
-            Invoke-WebRequest -Uri $scrapedUrl -OutFile $odtExe -UserAgent $ua -UseBasicParsing
-        } else {
-            throw "Network filter is blocking the download and no link was found in the landing page."
-        }
-    }
-
-    # וידוא סופי אחרי הניסיון השני
-    if (-not (Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/?") )) {
-        throw "Critical: Failed to bypass network filter. Try a different network or VPN."
-    }
+    # שלב ההורדה
+    $downloadUrl = Get-ODTDownloadUrl
+    Say "Downloading from: $($downloadUrl.Substring(0, 50))..." Gray
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $odtExe -UseBasicParsing -UserAgent "Mozilla/5.0"
 
     Say "Extracting ODT..." Yellow
-    Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:$odtExtract")) | Out-Null
+    Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:$odtExtract"))
     
     $setupExe = (Get-ChildItem -Path $odtExtract -Filter "setup.exe" -File -Recurse | Select-Object -First 1).FullName
 
-    # --- תהליך הגדרה ---
+    # --- תהליך בחירת מוצר (המרה ל-Streaming מהיר) ---
     $productOptions = @{ "1"="M365 Apps"; "2"="Office 2024 LTSC Pro"; "3"="Office 2024 LTSC Std" }
     $productChoice = Read-Choice "Product:" $productOptions "1"
     $productId = switch($productChoice){"1"{"O365ProPlusRetail"}"2"{"ProPlus2024Volume"}"3"{"Standard2024Volume"}}
@@ -132,10 +119,11 @@ function Start-OfficeODTInteractive {
 "@
     $xml | Out-File -FilePath $configPath -Encoding UTF8
 
+    # האופטימיזציה למהירות: הורדה והתקנה במקביל
     Say "Starting High-Speed Installation (Streaming Mode)..." Green
-    Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory $odtExtract | Out-Null
+    Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory $odtExtract
 
-    Say "Success! Logs at: $base" Green
+    Say "Success! Workflow complete. Temp files: $base" Green
 }
 
 Start-OfficeODTInteractive
