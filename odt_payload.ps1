@@ -1,6 +1,5 @@
 # odt_payload.ps1
-# Office ODT High-Speed Interactive Installer
-# Optimized for Shai Tal - Developer Edition
+# Office ODT High-Speed Interactive Installer (Fixed BITS Error)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -59,26 +58,25 @@ function Start-OfficeODTInteractive {
 
     Say "--- Office ODT High-Speed Installer ---" Green
     
-    # בדיקת הרשאות והמלצת ביצועים
     $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $isAdmin) { Say "WARNING: Not running as Administrator. Installation will likely fail." Yellow }
-    Say "Optimization: Using Streaming Mode & BITS Transfer." Gray
 
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     $odtExtract = Join-Path $base "ODT"
     $sourcePath = Join-Path $base "OfficeSource"
     New-Item -ItemType Directory -Path $odtExtract, $sourcePath -Force | Out-Null
 
-    # הורדת ODT באמצעות BITS למהירות מקסימלית
+    # תיקון: שימוש ב-Invoke-WebRequest במקום BITS עבור הקישור הדינמי
     $odtExe = Join-Path $base "odt_setup.exe"
     Say "Downloading ODT Engine..." Yellow
-    Start-BitsTransfer -Source "https://aka.ms/ODT" -Destination $odtExe -Priority High
+    Invoke-WebRequest -Uri "https://aka.ms/ODT" -OutFile $odtExe -UseBasicParsing
 
     Say "Extracting ODT..." Yellow
     Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:{0}" -f $odtExtract))
+    
     $setupExe = (Get-ChildItem -Path $odtExtract -Filter "setup.exe" -File -Recurse | Select-Object -First 1).FullName
 
-    # --- אפשרויות אינטראקטיביות (החזרת כל הלוגיקה המקורית) ---
+    # --- אפשרויות אינטראקטיביות ---
     $productOptions = @{
         "1" = "Microsoft 365 Apps for enterprise"
         "2" = "Office LTSC Professional Plus 2024"
@@ -92,7 +90,6 @@ function Start-OfficeODTInteractive {
     $arch = if ((Read-Choice "Architecture:" @{"1"="64-bit";"2"="32-bit"} "1") -eq "2") { "32" } else { "64" }
     $lang = (Ask "Language (e.g. en-us, he-il) [Default: en-us]").Trim(); if (!$lang) { $lang = "en-us" }
 
-    # ערוצי עדכון
     $channel = "Current"
     if ($productId -eq "O365ProPlusRetail") {
         $channelChoice = Read-Choice "Update Channel:" @{"1"="Current";"2"="MonthlyEnterprise";"3"="SemiAnnual";"4"="Beta"} "1"
@@ -102,7 +99,6 @@ function Start-OfficeODTInteractive {
     $verIn = Ask "Exact Version build (leave blank for latest)"
     $shared = if ($productId -eq "O365ProPlusRetail") { Read-YesNo "Enable SharedComputerLicensing (RDS/VDI)?" $false } else { $false }
 
-    # החרגת אפליקציות
     $appList = @("Access","Excel","Groove","Lync","OneDrive","OneNote","Outlook","PowerPoint","Publisher","Teams","Word")
     Say "Exclude Apps (e.g. 1,4,9):" Gray
     for ($i=0; $i -lt $appList.Count; $i++) { Say ("{0,2}) {1}" -f ($i+1), $appList[$i]) Gray }
@@ -114,7 +110,6 @@ function Start-OfficeODTInteractive {
         }
     }
 
-    # יצירת XML אופטימלי
     $configPath = Join-Path $base "configuration.xml"
     $verAttr = if ($verIn) { "Version=`"$verIn`"" } else { "" }
     $sharedAttr = if ($shared) { "<Property Name=`"SharedComputerLicensing`" Value=`"1`" />" } else { "" }
@@ -133,8 +128,7 @@ $excludeXml    </Product>
 "@
     $xml | Out-File -FilePath $configPath -Encoding UTF8
 
-    # הרצה - המעבר ל-Streaming Mode שחוסך זמן
-    Say "Starting Installation (Streaming Mode)..." Green
+    Say "Starting Installation (Streaming Mode - Fastest)..." Green
     Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory $odtExtract
 
     Say "Done! Temp folder: $base" Green
