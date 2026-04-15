@@ -1,6 +1,7 @@
 # odt_payload.ps1
-# VERSION: 2.2 (The "Silent Assassin" Edition)
-# Fixed: Absolute silencing of curl to prevent PowerShell ErrorAction conflict
+# VERSION: 2.3 (The "Direct Hit" Edition)
+# Optimized for Shai Tal
+# Fix: Using absolute CDN URL to bypass redirection loops
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -51,20 +52,28 @@ function Start-OfficeODTInteractive {
         param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
         if (-not (Test-Path $FilePath)) { throw "Error: $FilePath not found." }
         
-        $bytes = Get-Content $FilePath -Encoding Byte -TotalCount 2 -ErrorAction SilentlyContinue
+        # בדיקת Magic Bytes (חתימת EXE) - תואם לכל גרסאות PowerShell
+        $fileStream = New-Object System.IO.FileStream($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read)
+        $bytes = New-Object byte[] 2
+        $fileStream.Read($bytes, 0, 2) | Out-Null
+        $fileStream.Close()
+
         if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
-            throw "The downloaded file is NOT a valid executable. Curl failed to fetch the binary correctly."
+            Say "DEBUG: File content starts with: $([System.Text.Encoding]::ASCII.GetString($bytes))" Yellow
+            $contentSample = Get-Content $FilePath -TotalCount 5
+            Say "DEBUG: First lines of file: $contentSample" Gray
+            throw "The downloaded file is NOT a valid Windows executable. It appears to be an HTML or Text file."
         }
 
         $old = Get-Location
         try {
-            if ($WorkingDirectory) { Set-Location -LiteralPath $WorkingDirectory }
+            if ($WorkingDirectory) { Set-Location $FilePath }
             $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -WindowStyle Hidden
             $p.WaitForExit()
         } finally { Set-Location $old }
     }
 
-    Say "--- Office ODT High-Speed Installer (v2.2 - SILENT) ---" Green
+    Say "--- Office ODT High-Speed Installer (v2.3 - CDN DIRECT) ---" Green
     
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     $odtExtract = Join-Path $base "ODT"
@@ -73,12 +82,14 @@ function Start-OfficeODTInteractive {
 
     $odtExe = Join-Path $base "odt_setup.exe"
     
-    Say "Fetching ODT Engine (Total Silence Mode)..." Yellow
-    # הוספת 2>$null מבטיחה ששום דבר לא יישלח לערוץ השגיאות ויעצור את הסקריפט
-    & curl.exe -sSL -o $odtExe "https://aka.ms/ODT" 2>$null
+    # שימוש בקישור ישיר ל-CDN של מיקרוסופט (עוקף את aka.ms)
+    $cdnUrl = "https://download.microsoft.com/download/2/7/A/27AF1BE6-DD20-4CB4-B154-EBAB4551408F/officedeploymenttool_17328-20162.exe"
+    
+    Say "Fetching ODT Engine from Direct CDN..." Yellow
+    & curl.exe -sSL -o $odtExe $cdnUrl 2>$null
 
     Say "Extracting ODT..." Yellow
-    Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:{0}" -f $odtExtract))
+    Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:$odtExtract"))
     
     $setupExe = (Get-ChildItem -Path $odtExtract -Filter "setup.exe" -File -Recurse | Select-Object -First 1).FullName
 
@@ -106,7 +117,7 @@ function Start-OfficeODTInteractive {
     Say "Starting High-Speed Installation (Streaming Mode)..." Green
     Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory $odtExtract
 
-    Say "Success! Temporary files are in: $base" Green
+    Say "Success! All temporary files are in: $base" Green
 }
 
 Start-OfficeODTInteractive
