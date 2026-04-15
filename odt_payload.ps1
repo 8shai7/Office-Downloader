@@ -1,6 +1,6 @@
 # odt_payload.ps1
-# Office ODT High-Speed Installer - Ultra-Stable Version
-# Optimized for Shai Tal
+# Office ODT High-Speed Installer - Curl Edition
+# Fixed: Download redirection issues using curl.exe
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -51,10 +51,10 @@ function Start-OfficeODTInteractive {
         param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
         if (-not (Test-Path $FilePath)) { throw "Error: $FilePath not found." }
         
-        # אימות שמדובר בקובץ EXE אמיתי (בדיקת Magic Bytes 'MZ')
+        # אימות Magic Bytes 'MZ' למניעת הרצת קבצי HTML
         $bytes = Get-Content $FilePath -Encoding Byte -TotalCount 2 -ErrorAction SilentlyContinue
         if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
-            throw "The downloaded file is not a valid Windows executable (likely an HTML error page)."
+            throw "Critical Error: The downloaded file is NOT a valid executable. It might be an HTML error page."
         }
 
         $old = Get-Location
@@ -65,7 +65,7 @@ function Start-OfficeODTInteractive {
         } finally { Set-Location $old }
     }
 
-    Say "--- Office ODT High-Speed Installer (Ultra-Stable) ---" Green
+    Say "--- Office ODT High-Speed Installer (Fixed) ---" Green
     
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     $odtExtract = Join-Path $base "ODT"
@@ -74,16 +74,9 @@ function Start-OfficeODTInteractive {
 
     $odtExe = Join-Path $base "odt_setup.exe"
     
-    # קישור ישיר לגרסה יציבה כדי למנוע בעיות Redirection
-    $directUrl = "https://download.microsoft.com/download/2/7/A/27AF1BE6-DD20-4CB4-B154-EBAB4551408F/officedeploymenttool_17328-20162.exe"
-    
-    Say "Downloading ODT Engine (Direct Link)..." Yellow
-    try {
-        Invoke-WebRequest -Uri $directUrl -OutFile $odtExe -UserAgent "Mozilla/5.0" -UseBasicParsing
-    } catch {
-        Say "Direct download failed, trying fallback aka.ms..." Yellow
-        Invoke-WebRequest -Uri "https://aka.ms/ODT" -OutFile $odtExe -UserAgent "Mozilla/5.0" -UseBasicParsing
-    }
+    # שימוש ב-curl.exe עם דגל -L (Follow Redirects) - השיטה הכי אמינה להורדה ממיקרוסופט
+    Say "Downloading ODT Engine using curl..." Yellow
+    curl.exe -L -o $odtExe "https://aka.ms/ODT" 2>$null
 
     Say "Extracting ODT..." Yellow
     Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:{0}" -f $odtExtract))
@@ -112,10 +105,10 @@ function Start-OfficeODTInteractive {
 "@
     $xml | Out-File -FilePath $configPath -Encoding UTF8
 
-    Say "Installing Office (Streaming Mode)..." Green
+    Say "Starting Installation (Streaming Mode)..." Green
     Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory $odtExtract
 
-    Say "Done! Logs: $base" Green
+    Say "Done! Files: $base" Green
 }
 
 Start-OfficeODTInteractive
