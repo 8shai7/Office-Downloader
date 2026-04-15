@@ -1,6 +1,6 @@
 # odt_payload.ps1
-# Office ODT High-Speed Installer - Silent Curl Edition
-# Fixes: PowerShell stderr conflict with curl progress bar
+# VERSION: 2.2 (The "Silent Assassin" Edition)
+# Fixed: Absolute silencing of curl to prevent PowerShell ErrorAction conflict
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -53,7 +53,7 @@ function Start-OfficeODTInteractive {
         
         $bytes = Get-Content $FilePath -Encoding Byte -TotalCount 2 -ErrorAction SilentlyContinue
         if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
-            throw "The downloaded file is NOT a valid executable. Curl might have failed."
+            throw "The downloaded file is NOT a valid executable. Curl failed to fetch the binary correctly."
         }
 
         $old = Get-Location
@@ -64,7 +64,7 @@ function Start-OfficeODTInteractive {
         } finally { Set-Location $old }
     }
 
-    Say "--- Office ODT High-Speed Installer (Fixed Curl) ---" Green
+    Say "--- Office ODT High-Speed Installer (v2.2 - SILENT) ---" Green
     
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     $odtExtract = Join-Path $base "ODT"
@@ -73,9 +73,9 @@ function Start-OfficeODTInteractive {
 
     $odtExe = Join-Path $base "odt_setup.exe"
     
-    Say "Fetching ODT Engine (Silent Mode)..." Yellow
-    # -s: Silent (no progress bar), -S: Show error, -L: Follow redirects
-    & curl.exe -sSL -o $odtExe "https://aka.ms/ODT"
+    Say "Fetching ODT Engine (Total Silence Mode)..." Yellow
+    # הוספת 2>$null מבטיחה ששום דבר לא יישלח לערוץ השגיאות ויעצור את הסקריפט
+    & curl.exe -sSL -o $odtExe "https://aka.ms/ODT" 2>$null
 
     Say "Extracting ODT..." Yellow
     Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:{0}" -f $odtExtract))
@@ -103,10 +103,10 @@ function Start-OfficeODTInteractive {
 "@
     $xml | Out-File -FilePath $configPath -Encoding UTF8
 
-    Say "Starting High-Speed Installation..." Green
+    Say "Starting High-Speed Installation (Streaming Mode)..." Green
     Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory $odtExtract
 
-    Say "Done! Files: $base" Green
+    Say "Success! Temporary files are in: $base" Green
 }
 
 Start-OfficeODTInteractive
