@@ -83,7 +83,6 @@ function Start-OfficeODTInteractive {
     
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     $odtExtract = Join-Path $base "ODT"
-    $sourcePath = Join-Path $base "OfficeSource"
     New-Item -ItemType Directory -Path $odtExtract, $sourcePath -Force | Out-Null
     $odtExe = Join-Path $base "odt_setup.exe"
     
@@ -105,16 +104,17 @@ function Start-OfficeODTInteractive {
     $arch = if ((Read-Choice "Arch:" @{"1"="64-bit";"2"="32-bit"} "1") -eq "2") { "32" } else { "64" }
     $lang = (Ask "Language (e.g. en-us, he-il) [Default: en-us]").Trim(); if (!$lang) { $lang = "en-us" }
 
-    $configPath = Join-Path $base "configuration.xml"
+$configPath = Join-Path $base "configuration.xml"
     $xml = @"
 <Configuration>
-  <Add OfficeClientEdition="$arch" Channel="Current" SourcePath="$sourcePath">
+  <Add OfficeClientEdition="$arch" Channel="Current">
     <Product ID="$productId">
       <Language ID="$lang" />
     </Product>
   </Add>
   <Display Level="Full" AcceptEULA="TRUE" />
   <Property Name="FORCEAPPSHUTDOWN" Value="TRUE" />
+  <Property Name="SharedComputerLicensing" Value="0" />
 </Configuration>
 "@
     $xml | Out-File -FilePath $configPath -Encoding UTF8
