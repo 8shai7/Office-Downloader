@@ -1,7 +1,6 @@
 # odt_payload.ps1
-# VERSION: 3.1 (The "Original Scraper" Hybrid)
+# VERSION: 3.2 (The "App Selector" Edition)
 # Optimized for Shai Tal - Developer/Instructor
-# Combination of original scraping logic and high-speed streaming installation.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -37,40 +36,24 @@ function Start-OfficeODTInteractive {
     }
 
     function Get-ODTDownloadUrl {
-        # הלינק והלוגיקה המקורית מהקובץ הראשון שלך
         $detailsUrl = "https://www.microsoft.com/en-us/download/details.aspx?id=49117"
         $fallback   = "https://aka.ms/ODT"
         $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        
         try {
-            Say "Scraping Microsoft Download Center (Original Method)..." Yellow
+            Say "Scraping Microsoft Download Center..." Yellow
             $resp = Invoke-WebRequest -Uri $detailsUrl -UseBasicParsing -Headers @{ "Cache-Control"="no-cache"; "User-Agent"=$ua }
-            
-            # הרג'קס המקורי שלך
             $re = '"url"\s*:\s*"(https://download\.microsoft\.com/download/[^"]+officedeploymenttool[^"]+\.exe)"'
             if ($resp.Content -match $re) { return $Matches[1] }
-            
-            $re2 = '(https://download\.microsoft\.com/download/[^"\s]+officedeploymenttool[^"\s]+\.exe)'
-            $m = [regex]::Match($resp.Content, $re2)
-            if ($m.Success) { return $m.Groups[1].Value }
-            
             return $fallback
-        } catch {
-            return $fallback
-        }
+        } catch { return $fallback }
     }
 
     function Invoke-ExeNoExitCodeAssumption {
         param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
         if (-not (Test-Path $FilePath)) { throw "Error: $FilePath not found." }
-        
-        # וידוא שמדובר ב-EXE תקין
         $fs = New-Object System.IO.FileStream($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read)
         $b = New-Object byte[] 2; $fs.Read($b, 0, 2) | Out-Null; $fs.Close()
-        if ($b[0] -ne 0x4D -or $b[1] -ne 0x5A) {
-            throw "The downloaded file is NOT a valid executable (Header Check Failed)."
-        }
-
+        if ($b[0] -ne 0x4D -or $b[1] -ne 0x5A) { throw "Invalid executable header." }
         $old = Get-Location
         try {
             if ($WorkingDirectory) { Set-Location $WorkingDirectory }
@@ -79,37 +62,54 @@ function Start-OfficeODTInteractive {
         } finally { Set-Location $old }
     }
 
-    Say "--- Office ODT High-Speed Installer (v3.1) ---" Green
+    Say "--- Office ODT High-Speed Installer (v3.2) ---" Green
     
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     $odtExtract = Join-Path $base "ODT"
     New-Item -ItemType Directory -Path $odtExtract -Force | Out-Null
     $odtExe = Join-Path $base "odt_setup.exe"
     
-    # שלב ההורדה
     $downloadUrl = Get-ODTDownloadUrl
-    Say "Downloading from: $($downloadUrl.Substring(0, 50))..." Gray
+    Say "Downloading ODT engine..." Gray
     Invoke-WebRequest -Uri $downloadUrl -OutFile $odtExe -UseBasicParsing -UserAgent "Mozilla/5.0"
 
     Say "Extracting ODT..." Yellow
     Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:$odtExtract"))
-    
     $setupExe = (Get-ChildItem -Path $odtExtract -Filter "setup.exe" -File -Recurse | Select-Object -First 1).FullName
 
-    # --- תהליך בחירת מוצר (המרה ל-Streaming מהיר) ---
+    # --- Configuration Phase ---
     $productOptions = @{ "1"="M365 Apps"; "2"="Office 2024 LTSC Pro"; "3"="Office 2024 LTSC Std" }
-    $productChoice = Read-Choice "Product:" $productOptions "1"
+    $productChoice = Read-Choice "Product Suite:" $productOptions "1"
     $productId = switch($productChoice){"1"{"O365ProPlusRetail"}"2"{"ProPlus2024Volume"}"3"{"Standard2024Volume"}}
 
     $arch = if ((Read-Choice "Arch:" @{"1"="64-bit";"2"="32-bit"} "1") -eq "2") { "32" } else { "64" }
     $lang = (Ask "Language (e.g. en-us, he-il) [Default: en-us]").Trim(); if (!$lang) { $lang = "en-us" }
 
-$configPath = Join-Path $base "configuration.xml"
+    # --- NEW: App Selection Logic ---
+    $appSelection = Read-Choice "Install Scope:" @{"1"="Full Suite (All Apps)"; "2"="Custom Selection"} "1"
+    $exclusions = ""
+    if ($appSelection -eq "2") {
+        # List of internal ODT names for apps
+        $allApps = @("Access", "Excel", "Groove", "Lync", "OneDrive", "OneNote", "Outlook", "PowerPoint", "Publisher", "Teams", "Word")
+        Say "Enter the numbers of the apps you WANT to install (e.g. 2,8,11), separated by commas:" Yellow
+        for ($i=0; $i -lt $allApps.Count; $i++) { Say ("  [$($i+1)] $($allApps[$i])") Gray }
+        
+        $chosenIdx = (Ask "Apps to INCLUDE").Split(',') | ForEach-Object { [int]$_.Trim() - 1 }
+        
+        # We generate <ExcludeApp ID="AppName" /> for everything NOT chosen
+        for ($i=0; $i -lt $allApps.Count; $i++) {
+            if ($i -notin $chosenIdx) {
+                $exclusions += "`n      <ExcludeApp ID=""$($allApps[$i])"" />"
+            }
+        }
+    }
+
+    $configPath = Join-Path $base "configuration.xml"
     $xml = @"
 <Configuration>
   <Add OfficeClientEdition="$arch" Channel="Current">
     <Product ID="$productId">
-      <Language ID="$lang" />
+      <Language ID="$lang" />$exclusions
     </Product>
   </Add>
   <Display Level="Full" AcceptEULA="TRUE" />
@@ -119,11 +119,10 @@ $configPath = Join-Path $base "configuration.xml"
 "@
     $xml | Out-File -FilePath $configPath -Encoding UTF8
 
-    # האופטימיזציה למהירות: הורדה והתקנה במקביל
     Say "Starting High-Speed Installation (Streaming Mode)..." Green
     Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory $odtExtract
 
-    Say "Success! Workflow complete. Temp files: $base" Green
+    Say "Success! Workflow complete." Green
 }
 
 Start-OfficeODTInteractive
