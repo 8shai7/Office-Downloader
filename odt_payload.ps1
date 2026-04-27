@@ -83,7 +83,7 @@ function Start-OfficeODTInteractive {
     
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     $odtExtract = Join-Path $base "ODT"
-    New-Item -ItemType Directory -Path $odtExtract, $sourcePath -Force | Out-Null
+    New-Item -ItemType Directory -Path $odtExtract -Force | Out-Null
     $odtExe = Join-Path $base "odt_setup.exe"
     
     # שלב ההורדה
