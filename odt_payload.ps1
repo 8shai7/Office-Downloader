@@ -1,6 +1,6 @@
 # odt_payload.ps1
-# VERSION: 3.2 (The "App Selector" Edition)
-# Optimized for Shai Tal - Developer/Instructor
+# VERSION: 3.3 (The "Stability" Edition)
+# Optimized for Professional Deployment Environments
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -48,21 +48,23 @@ function Start-OfficeODTInteractive {
         } catch { return $fallback }
     }
 
-    function Invoke-ExeNoExitCodeAssumption {
+    function Invoke-ExeSecure {
         param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
         if (-not (Test-Path $FilePath)) { throw "Error: $FilePath not found." }
-        $fs = New-Object System.IO.FileStream($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read)
-        $b = New-Object byte[] 2; $fs.Read($b, 0, 2) | Out-Null; $fs.Close()
-        if ($b[0] -ne 0x4D -or $b[1] -ne 0x5A) { throw "Invalid executable header." }
+        
+        # Ensure the file is unblocked before execution
+        Unblock-File -Path $FilePath -ErrorAction SilentlyContinue
+
         $old = Get-Location
         try {
             if ($WorkingDirectory) { Set-Location $WorkingDirectory }
-            $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -WindowStyle Hidden
-            $p.WaitForExit()
+            # Use ArgumentList with literal quotes for the config path to fix Error 0-2048
+            $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -Wait
+            return $p.ExitCode
         } finally { Set-Location $old }
     }
 
-    Say "--- Office ODT High-Speed Installer (v3.2) ---" Green
+    Say "--- Office ODT High-Speed Installer (v3.3) ---" Green
     
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     $odtExtract = Join-Path $base "ODT"
@@ -74,29 +76,34 @@ function Start-OfficeODTInteractive {
     Invoke-WebRequest -Uri $downloadUrl -OutFile $odtExe -UseBasicParsing -UserAgent "Mozilla/5.0"
 
     Say "Extracting ODT..." Yellow
-    Invoke-ExeNoExitCodeAssumption -FilePath $odtExe -Arguments @("/quiet", ("/extract:$odtExtract"))
+    Invoke-ExeSecure -FilePath $odtExe -Arguments @("/quiet", "/extract:`"$odtExtract`"")
+    
     $setupExe = (Get-ChildItem -Path $odtExtract -Filter "setup.exe" -File -Recurse | Select-Object -First 1).FullName
 
     # --- Configuration Phase ---
     $productOptions = @{ "1"="M365 Apps"; "2"="Office 2024 LTSC Pro"; "3"="Office 2024 LTSC Std" }
     $productChoice = Read-Choice "Product Suite:" $productOptions "1"
+    
+    # Logic for Product ID and Channel (LTSC requires PerpetualVL2024)
     $productId = switch($productChoice){"1"{"O365ProPlusRetail"}"2"{"ProPlus2024Volume"}"3"{"Standard2024Volume"}}
+    $channel = if ($productChoice -eq "1") { "Current" } else { "PerpetualVL2024" }
 
     $arch = if ((Read-Choice "Arch:" @{"1"="64-bit";"2"="32-bit"} "1") -eq "2") { "32" } else { "64" }
     $lang = (Ask "Language (e.g. en-us, he-il) [Default: en-us]").Trim(); if (!$lang) { $lang = "en-us" }
 
-    # --- NEW: App Selection Logic ---
+    # --- App Selection Logic ---
     $appSelection = Read-Choice "Install Scope:" @{"1"="Full Suite (All Apps)"; "2"="Custom Selection"} "1"
     $exclusions = ""
     if ($appSelection -eq "2") {
-        # List of internal ODT names for apps
         $allApps = @("Access", "Excel", "Groove", "Lync", "OneDrive", "OneNote", "Outlook", "PowerPoint", "Publisher", "Teams", "Word")
-        Say "Enter the numbers of the apps you WANT to install (e.g. 2,8,11), separated by commas:" Yellow
+        Say "Enter numbers to INCLUDE (e.g. 2,8,11):" Yellow
         for ($i=0; $i -lt $allApps.Count; $i++) { Say ("  [$($i+1)] $($allApps[$i])") Gray }
         
-        $chosenIdx = (Ask "Apps to INCLUDE").Split(',') | ForEach-Object { [int]$_.Trim() - 1 }
+        $inputRaw = Ask "Apps to INCLUDE"
+        $chosenIdx = $inputRaw.Split(',') | ForEach-Object { 
+            if ([int]::TryParse($_.Trim(), [ref]$val)) { $val - 1 } 
+        }
         
-        # We generate <ExcludeApp ID="AppName" /> for everything NOT chosen
         for ($i=0; $i -lt $allApps.Count; $i++) {
             if ($i -notin $chosenIdx) {
                 $exclusions += "`n      <ExcludeApp ID=""$($allApps[$i])"" />"
@@ -107,7 +114,7 @@ function Start-OfficeODTInteractive {
     $configPath = Join-Path $base "configuration.xml"
     $xml = @"
 <Configuration>
-  <Add OfficeClientEdition="$arch" Channel="Current">
+  <Add OfficeClientEdition="$arch" Channel="$channel">
     <Product ID="$productId">
       <Language ID="$lang" />$exclusions
     </Product>
@@ -119,10 +126,20 @@ function Start-OfficeODTInteractive {
 "@
     $xml | Out-File -FilePath $configPath -Encoding UTF8
 
-    Say "Starting High-Speed Installation (Streaming Mode)..." Green
-    Invoke-ExeNoExitCodeAssumption -FilePath $setupExe -Arguments @("/configure", $configPath) -WorkingDirectory $odtExtract
+    if (Test-Path $configPath) {
+        Say "Starting High-Speed Installation (Streaming Mode)..." Green
+        # Use literal double quotes for the path argument to satisfy ODT parser
+        $argList = @("/configure", "`"$configPath`"")
+        Invoke-ExeSecure -FilePath $setupExe -Arguments $argList -WorkingDirectory $odtExtract
+        
+        Say "Success! Workflow complete." Green
+    } else {
+        Say "Critical Error: Configuration file could not be generated." Red
+    }
 
-    Say "Success! Workflow complete." Green
+    # --- Cleanup ---
+    Say "Cleaning up temporary files..." Gray
+    Remove-Item -Path $base -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 Start-OfficeODTInteractive
