@@ -1,6 +1,6 @@
 # odt_payload.ps1
-# VERSION: 3.3 (The "Stability" Edition)
-# Optimized for Professional Deployment Environments
+# VERSION: 3.4 (The "Reference Fix" Edition)
+# Optimized for Shai Tal - Developer/Instructor
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -52,19 +52,17 @@ function Start-OfficeODTInteractive {
         param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
         if (-not (Test-Path $FilePath)) { throw "Error: $FilePath not found." }
         
-        # Ensure the file is unblocked before execution
         Unblock-File -Path $FilePath -ErrorAction SilentlyContinue
 
         $old = Get-Location
         try {
             if ($WorkingDirectory) { Set-Location $WorkingDirectory }
-            # Use ArgumentList with literal quotes for the config path to fix Error 0-2048
             $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -Wait
             return $p.ExitCode
         } finally { Set-Location $old }
     }
 
-    Say "--- Office ODT High-Speed Installer (v3.3) ---" Green
+    Say "--- Office ODT High-Speed Installer (v3.4) ---" Green
     
     $base = Join-Path $env:TEMP ("ODT_" + (Get-Date -Format "yyyyMMdd_HHmmss"))
     $odtExtract = Join-Path $base "ODT"
@@ -84,7 +82,6 @@ function Start-OfficeODTInteractive {
     $productOptions = @{ "1"="M365 Apps"; "2"="Office 2024 LTSC Pro"; "3"="Office 2024 LTSC Std" }
     $productChoice = Read-Choice "Product Suite:" $productOptions "1"
     
-    # Logic for Product ID and Channel (LTSC requires PerpetualVL2024)
     $productId = switch($productChoice){"1"{"O365ProPlusRetail"}"2"{"ProPlus2024Volume"}"3"{"Standard2024Volume"}}
     $channel = if ($productChoice -eq "1") { "Current" } else { "PerpetualVL2024" }
 
@@ -101,7 +98,8 @@ function Start-OfficeODTInteractive {
         
         $inputRaw = Ask "Apps to INCLUDE"
         $chosenIdx = $inputRaw.Split(',') | ForEach-Object { 
-            if ([int]::TryParse($_.Trim(), [ref]$val)) { $val - 1 } 
+            $v = 0 # FIX: Pre-initialize variable for [ref]
+            if ([int]::TryParse($_.Trim(), [ref]$v)) { $v - 1 } 
         }
         
         for ($i=0; $i -lt $allApps.Count; $i++) {
@@ -128,7 +126,6 @@ function Start-OfficeODTInteractive {
 
     if (Test-Path $configPath) {
         Say "Starting High-Speed Installation (Streaming Mode)..." Green
-        # Use literal double quotes for the path argument to satisfy ODT parser
         $argList = @("/configure", "`"$configPath`"")
         Invoke-ExeSecure -FilePath $setupExe -Arguments $argList -WorkingDirectory $odtExtract
         
@@ -137,7 +134,6 @@ function Start-OfficeODTInteractive {
         Say "Critical Error: Configuration file could not be generated." Red
     }
 
-    # --- Cleanup ---
     Say "Cleaning up temporary files..." Gray
     Remove-Item -Path $base -Recurse -Force -ErrorAction SilentlyContinue
 }
