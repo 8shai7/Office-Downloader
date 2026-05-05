@@ -10,7 +10,7 @@ An interactive PowerShell script designed to streamline the deployment of Micros
 
 - **Smart Scraping:** Automatically crawls the Microsoft Download Center to ensure the latest ODT engine is used.
 - **Office 2024 Ready:** Full support for the new LTSC 2024 versions (Pro Plus & Standard).
-- **Granular Customization:** Interactive "Install Scope" selection allowing you to include or exclude specific apps (e.g., install only Word and Excel).
+- **Granular Customization:** Interactive "Install Scope" selection allowing you to include specific apps (e.g., install only Word and Excel).
 - **Robust Architecture:** Supports both 64-bit and 32-bit deployments with custom language localized support (e.g., en-us, he-il).
 - **Automated Workflow:** Handles downloading, extraction, XML generation, and installation in one seamless process.
 - **Zero Footprint:** Automatically cleans up all temporary files from the system `TEMP` directory upon completion.
