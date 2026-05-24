@@ -86,7 +86,18 @@ function Start-OfficeODTInteractive {
     $channel = if ($productChoice -eq "1") { "Current" } else { "PerpetualVL2024" }
 
     $arch = if ((Read-Choice "Arch:" @{"1"="64-bit";"2"="32-bit"} "1") -eq "2") { "32" } else { "64" }
-    $lang = (Ask "Language (e.g. en-us, he-il) [Default: en-us]").Trim(); if (!$lang) { $lang = "en-us" }
+
+    while ($true) {
+        $lang = (Ask "Language (e.g. en-us, he-il) [Default: en-us]").Trim()
+        if (!$lang) {
+            $lang = "en-us"
+            break
+        }
+        if ($lang -match '^[a-zA-Z0-9\-]+$') {
+            break
+        }
+        Say "Invalid language format. Only alphanumeric characters and hyphens are allowed (no spaces, quotes, etc)." Yellow
+    }
 
     # --- App Selection Logic ---
     $appSelection = Read-Choice "Install Scope:" @{"1"="Full Suite (All Apps)"; "2"="Custom Selection"} "1"
