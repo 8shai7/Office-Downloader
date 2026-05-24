@@ -98,7 +98,7 @@ function Start-OfficeODTInteractive {
         
         $inputRaw = Ask "Apps to INCLUDE"
         $chosenIdx = $inputRaw.Split(',') | ForEach-Object { 
-            $v = 0 # FIX: Pre-initialize variable for [ref]
+            $v = 0
             if ([int]::TryParse($_.Trim(), [ref]$v)) { $v - 1 } 
         }
         
