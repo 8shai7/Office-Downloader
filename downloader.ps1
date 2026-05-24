@@ -11,7 +11,7 @@ Write-Host "[BOOT] Fetching FRESH payload (v=$cacheBuster)..." -ForegroundColor 
 
 try {
     # שימוש ב-Header של Cache-Control ליתר ביטחון
-    $resp = Invoke-WebRequest -Uri $realScriptUrl -UseBasicParsing -Headers @{'Cache-Control'='no-cache'}
+    $resp = Invoke-WebRequest -Uri $realScriptUrl -Headers @{'Cache-Control'='no-cache'}
     $code = $resp.Content
     
     $sb = [ScriptBlock]::Create($code)

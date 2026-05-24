@@ -41,7 +41,7 @@ function Start-OfficeODTInteractive {
         $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         try {
             Say "Scraping Microsoft Download Center..." Yellow
-            $resp = Invoke-WebRequest -Uri $detailsUrl -UseBasicParsing -Headers @{ "Cache-Control"="no-cache"; "User-Agent"=$ua }
+            $resp = Invoke-WebRequest -Uri $detailsUrl -Headers @{ "Cache-Control"="no-cache"; "User-Agent"=$ua }
             $re = '"url"\s*:\s*"(https://download\.microsoft\.com/download/[^"]+officedeploymenttool[^"]+\.exe)"'
             if ($resp.Content -match $re) { return $Matches[1] }
             return $fallback
@@ -71,7 +71,7 @@ function Start-OfficeODTInteractive {
     
     $downloadUrl = Get-ODTDownloadUrl
     Say "Downloading ODT engine..." Gray
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $odtExe -UseBasicParsing -UserAgent "Mozilla/5.0"
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $odtExe -UserAgent "Mozilla/5.0"
 
     Say "Extracting ODT..." Yellow
     Invoke-ExeSecure -FilePath $odtExe -Arguments @("/quiet", "/extract:`"$odtExtract`"")
