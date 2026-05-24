@@ -1,7 +1,7 @@
 # downloader.ps1 (BOOTSTRAP WITH CACHE BUSTER)
 # V2.3
 $ErrorActionPreference = 'Stop'
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 # יצירת מחרוזת זמן כדי למנוע טעינה מה-Cache
 $cacheBuster = Get-Date -Format "yyyyMMddHHmmss"
