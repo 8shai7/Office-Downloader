@@ -6,61 +6,61 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
+function Say {
+    param([AllowEmptyString()][string]$m = "", [ConsoleColor]$c = [ConsoleColor]::White)
+    try { Write-Host $m -ForegroundColor $c } catch { Write-Output $m }
+}
+
+function Ask {
+    param([Parameter(Mandatory)][string]$p)
+    Say $p Cyan
+    return Read-Host "> "
+}
+
+function Read-Choice {
+    param([string]$p, [hashtable]$o, [string]$d = $null)
+    Say "" White; Say $p White
+    foreach ($k in ($o.Keys | Sort-Object)) {
+        $l = $o[$k]
+        if ($d -and $k -eq $d) { Say ("  [{0}] {1} (default)" -f $k, $l) DarkGray }
+        else { Say ("  [{0}] {1}" -f $k, $l) Gray }
+    }
+    while ($true) {
+        $in = Ask "Select"
+        if ([string]::IsNullOrWhiteSpace($in) -and $d) { return $d }
+        if ($o.ContainsKey($in)) { return $in }
+        Say "Invalid selection." Yellow
+    }
+}
+
+function Get-ODTDownloadUrl {
+    $detailsUrl = "https://www.microsoft.com/en-us/download/details.aspx?id=49117"
+    $fallback   = "https://aka.ms/ODT"
+    $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    try {
+        Say "Scraping Microsoft Download Center..." Yellow
+        $resp = Invoke-WebRequest -Uri $detailsUrl -UseBasicParsing -Headers @{ "Cache-Control"="no-cache"; "User-Agent"=$ua }
+        $re = '"url"\s*:\s*"(https://download\.microsoft\.com/download/[^"]+officedeploymenttool[^"]+\.exe)"'
+        if ($resp.Content -match $re) { return $Matches[1] }
+        return $fallback
+    } catch { return $fallback }
+}
+
+function Invoke-ExeSecure {
+    param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
+    if (-not (Test-Path $FilePath)) { throw "Error: $FilePath not found." }
+
+    Unblock-File -Path $FilePath -ErrorAction SilentlyContinue
+
+    $old = Get-Location
+    try {
+        if ($WorkingDirectory) { Set-Location $WorkingDirectory }
+        $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -Wait
+        return $p.ExitCode
+    } finally { Set-Location $old }
+}
+
 function Start-OfficeODTInteractive {
-
-    function Say {
-        param([AllowEmptyString()][string]$m = "", [ConsoleColor]$c = [ConsoleColor]::White)
-        try { Write-Host $m -ForegroundColor $c } catch { Write-Output $m }
-    }
-
-    function Ask {
-        param([Parameter(Mandatory)][string]$p)
-        Say $p Cyan
-        return Read-Host "> "
-    }
-
-    function Read-Choice {
-        param([string]$p, [hashtable]$o, [string]$d = $null)
-        Say "" White; Say $p White
-        foreach ($k in ($o.Keys | Sort-Object)) {
-            $l = $o[$k]
-            if ($d -and $k -eq $d) { Say ("  [{0}] {1} (default)" -f $k, $l) DarkGray }
-            else { Say ("  [{0}] {1}" -f $k, $l) Gray }
-        }
-        while ($true) {
-            $in = Ask "Select"
-            if ([string]::IsNullOrWhiteSpace($in) -and $d) { return $d }
-            if ($o.ContainsKey($in)) { return $in }
-            Say "Invalid selection." Yellow
-        }
-    }
-
-    function Get-ODTDownloadUrl {
-        $detailsUrl = "https://www.microsoft.com/en-us/download/details.aspx?id=49117"
-        $fallback   = "https://aka.ms/ODT"
-        $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        try {
-            Say "Scraping Microsoft Download Center..." Yellow
-            $resp = Invoke-WebRequest -Uri $detailsUrl -UseBasicParsing -Headers @{ "Cache-Control"="no-cache"; "User-Agent"=$ua }
-            $re = '"url"\s*:\s*"(https://download\.microsoft\.com/download/[^"]+officedeploymenttool[^"]+\.exe)"'
-            if ($resp.Content -match $re) { return $Matches[1] }
-            return $fallback
-        } catch { return $fallback }
-    }
-
-    function Invoke-ExeSecure {
-        param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
-        if (-not (Test-Path $FilePath)) { throw "Error: $FilePath not found." }
-        
-        Unblock-File -Path $FilePath -ErrorAction SilentlyContinue
-
-        $old = Get-Location
-        try {
-            if ($WorkingDirectory) { Set-Location $WorkingDirectory }
-            $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -Wait
-            return $p.ExitCode
-        } finally { Set-Location $old }
-    }
 
     Say "--- Office ODT High-Speed Installer (v3.4) ---" Green
     
@@ -138,4 +138,6 @@ function Start-OfficeODTInteractive {
     Remove-Item -Path $base -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Start-OfficeODTInteractive
+if ($MyInvocation.InvocationName -ne '.') {
+    Start-OfficeODTInteractive
+}
