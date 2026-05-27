@@ -113,11 +113,11 @@ function Start-OfficeODTInteractive {
             if ([int]::TryParse($_.Trim(), [ref]$v)) { $v - 1 } 
         }
         
-        for ($i=0; $i -lt $allApps.Count; $i++) {
+        $exclusions = $(for ($i=0; $i -lt $allApps.Count; $i++) {
             if ($i -notin $chosenIdx) {
-                $exclusions += "`n      <ExcludeApp ID=""$($allApps[$i])"" />"
+                "`n      <ExcludeApp ID=""$($allApps[$i])"" />"
             }
-        }
+        }) -join ""
     }
 
     $configPath = Join-Path $base "configuration.xml"
