@@ -71,7 +71,7 @@ function Start-OfficeODTInteractive {
     
     $downloadUrl = Get-ODTDownloadUrl
     Say "Downloading ODT engine..." Gray
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $odtExe -UseBasicParsing -UserAgent "Mozilla/5.0"
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $odtExe -UserAgent "Mozilla/5.0"
 
     Say "Extracting ODT..." Yellow
     $exitCode = Invoke-ExeSecure -FilePath $odtExe -Arguments @("/quiet", "/extract:`"$odtExtract`"")
