@@ -6,61 +6,61 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
+function Say {
+    param([AllowEmptyString()][string]$m = "", [ConsoleColor]$c = [ConsoleColor]::White)
+    try { Write-Host $m -ForegroundColor $c } catch { Write-Output $m }
+}
+
+function Ask {
+    param([Parameter(Mandatory)][string]$p)
+    Say $p Cyan
+    return Read-Host "> "
+}
+
+function Read-Choice {
+    param([string]$p, [hashtable]$o, [string]$d = $null)
+    Say "" White; Say $p White
+    foreach ($k in ($o.Keys | Sort-Object)) {
+        $l = $o[$k]
+        if ($d -and $k -eq $d) { Say ("  [{0}] {1} (default)" -f $k, $l) DarkGray }
+        else { Say ("  [{0}] {1}" -f $k, $l) Gray }
+    }
+    while ($true) {
+        $in = Ask "Select"
+        if ([string]::IsNullOrWhiteSpace($in) -and $d) { return $d }
+        if ($o.ContainsKey($in)) { return $in }
+        Say "Invalid selection." Yellow
+    }
+}
+
+function Get-ODTDownloadUrl {
+    $detailsUrl = "https://www.microsoft.com/en-us/download/details.aspx?id=49117"
+    $fallback   = "https://aka.ms/ODT"
+    $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    try {
+        Say "Scraping Microsoft Download Center..." Yellow
+        $resp = Invoke-WebRequest -Uri $detailsUrl -UseBasicParsing -Headers @{ "Cache-Control"="no-cache"; "User-Agent"=$ua }
+        $re = '"url"\s*:\s*"(https://download\.microsoft\.com/download/[^"]+officedeploymenttool[^"]+\.exe)"'
+        if ($resp.Content -match $re) { return $Matches[1] }
+        return $fallback
+    } catch { return $fallback }
+}
+
+function Invoke-ExeSecure {
+    param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
+    if (-not (Test-Path $FilePath)) { throw "Error: $FilePath not found." }
+
+    Unblock-File -Path $FilePath -ErrorAction SilentlyContinue
+
+    $old = Get-Location
+    try {
+        if ($WorkingDirectory) { Set-Location $WorkingDirectory }
+        $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -Wait
+        return $p.ExitCode
+    } finally { Set-Location $old }
+}
+
 function Start-OfficeODTInteractive {
-
-    function Say {
-        param([AllowEmptyString()][string]$m = "", [ConsoleColor]$c = [ConsoleColor]::White)
-        try { Write-Host $m -ForegroundColor $c } catch { Write-Output $m }
-    }
-
-    function Ask {
-        param([Parameter(Mandatory)][string]$p)
-        Say $p Cyan
-        return Read-Host "> "
-    }
-
-    function Read-Choice {
-        param([string]$p, [hashtable]$o, [string]$d = $null)
-        Say "" White; Say $p White
-        foreach ($k in ($o.Keys | Sort-Object)) {
-            $l = $o[$k]
-            if ($d -and $k -eq $d) { Say ("  [{0}] {1} (default)" -f $k, $l) DarkGray }
-            else { Say ("  [{0}] {1}" -f $k, $l) Gray }
-        }
-        while ($true) {
-            $in = Ask "Select"
-            if ([string]::IsNullOrWhiteSpace($in) -and $d) { return $d }
-            if ($o.ContainsKey($in)) { return $in }
-            Say "Invalid selection." Yellow
-        }
-    }
-
-    function Get-ODTDownloadUrl {
-        $detailsUrl = "https://www.microsoft.com/en-us/download/details.aspx?id=49117"
-        $fallback   = "https://aka.ms/ODT"
-        $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        try {
-            Say "Scraping Microsoft Download Center..." Yellow
-            $resp = Invoke-WebRequest -Uri $detailsUrl -Headers @{ "Cache-Control"="no-cache"; "User-Agent"=$ua }
-            $re = '"url"\s*:\s*"(https://download\.microsoft\.com/download/[^"]+officedeploymenttool[^"]+\.exe)"'
-            if ($resp.Content -match $re) { return $Matches[1] }
-            return $fallback
-        } catch { return $fallback }
-    }
-
-    function Invoke-ExeSecure {
-        param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory = $null)
-        if (-not (Test-Path $FilePath)) { throw "Error: $FilePath not found." }
-        
-        Unblock-File -Path $FilePath -ErrorAction SilentlyContinue
-
-        $old = Get-Location
-        try {
-            if ($WorkingDirectory) { Set-Location $WorkingDirectory }
-            $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -Wait
-            return $p.ExitCode
-        } finally { Set-Location $old }
-    }
 
     Say "--- Office ODT High-Speed Installer (v3.4) ---" Green
     
@@ -74,7 +74,10 @@ function Start-OfficeODTInteractive {
     Invoke-WebRequest -Uri $downloadUrl -OutFile $odtExe -UserAgent "Mozilla/5.0"
 
     Say "Extracting ODT..." Yellow
-    Invoke-ExeSecure -FilePath $odtExe -Arguments @("/quiet", "/extract:`"$odtExtract`"")
+    $exitCode = Invoke-ExeSecure -FilePath $odtExe -Arguments @("/quiet", "/extract:`"$odtExtract`"")
+    if ($exitCode -ne 0) {
+        throw "Failed to extract ODT. Exit code: $exitCode"
+    }
     
     $setupExe = (Get-ChildItem -Path $odtExtract -Filter "setup.exe" -File -Recurse | Select-Object -First 1).FullName
 
@@ -86,7 +89,18 @@ function Start-OfficeODTInteractive {
     $channel = if ($productChoice -eq "1") { "Current" } else { "PerpetualVL2024" }
 
     $arch = if ((Read-Choice "Arch:" @{"1"="64-bit";"2"="32-bit"} "1") -eq "2") { "32" } else { "64" }
-    $lang = (Ask "Language (e.g. en-us, he-il) [Default: en-us]").Trim(); if (!$lang) { $lang = "en-us" }
+
+    while ($true) {
+        $lang = (Ask "Language (e.g. en-us, he-il) [Default: en-us]").Trim()
+        if (!$lang) {
+            $lang = "en-us"
+            break
+        }
+        if ($lang -match '^[a-zA-Z0-9\-]+$') {
+            break
+        }
+        Say "Invalid language format. Only alphanumeric characters and hyphens are allowed (no spaces, quotes, etc)." Yellow
+    }
 
     # --- App Selection Logic ---
     $appSelection = Read-Choice "Install Scope:" @{"1"="Full Suite (All Apps)"; "2"="Custom Selection"} "1"
@@ -98,15 +112,15 @@ function Start-OfficeODTInteractive {
         
         $inputRaw = Ask "Apps to INCLUDE"
         $chosenIdx = $inputRaw.Split(',') | ForEach-Object { 
-            $v = 0 # FIX: Pre-initialize variable for [ref]
+            $v = 0
             if ([int]::TryParse($_.Trim(), [ref]$v)) { $v - 1 } 
         }
         
-        for ($i=0; $i -lt $allApps.Count; $i++) {
+        $exclusions = $(for ($i=0; $i -lt $allApps.Count; $i++) {
             if ($i -notin $chosenIdx) {
-                $exclusions += "`n      <ExcludeApp ID=""$($allApps[$i])"" />"
+                "`n      <ExcludeApp ID=""$($allApps[$i])"" />"
             }
-        }
+        }) -join ""
     }
 
     $configPath = Join-Path $base "configuration.xml"
@@ -138,4 +152,6 @@ function Start-OfficeODTInteractive {
     Remove-Item -Path $base -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Start-OfficeODTInteractive
+if ($MyInvocation.InvocationName -ne '.') {
+    Start-OfficeODTInteractive
+}
