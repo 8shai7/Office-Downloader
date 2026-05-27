@@ -74,7 +74,10 @@ function Start-OfficeODTInteractive {
     Invoke-WebRequest -Uri $downloadUrl -OutFile $odtExe -UseBasicParsing -UserAgent "Mozilla/5.0"
 
     Say "Extracting ODT..." Yellow
-    Invoke-ExeSecure -FilePath $odtExe -Arguments @("/quiet", "/extract:`"$odtExtract`"")
+    $exitCode = Invoke-ExeSecure -FilePath $odtExe -Arguments @("/quiet", "/extract:`"$odtExtract`"")
+    if ($exitCode -ne 0) {
+        throw "Failed to extract ODT. Exit code: $exitCode"
+    }
     
     $setupExe = (Get-ChildItem -Path $odtExtract -Filter "setup.exe" -File -Recurse | Select-Object -First 1).FullName
 
