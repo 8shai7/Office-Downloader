@@ -141,9 +141,13 @@ function Start-OfficeODTInteractive {
     if (Test-Path $configPath) {
         Say "Starting High-Speed Installation (Streaming Mode)..." Green
         $argList = @("/configure", "`"$configPath`"")
-        Invoke-ExeSecure -FilePath $setupExe -Arguments $argList -WorkingDirectory $odtExtract
+        $exitCode = Invoke-ExeSecure -FilePath $setupExe -Arguments $argList -WorkingDirectory $odtExtract
         
-        Say "Success! Workflow complete." Green
+        if ($exitCode -eq 0) {
+            Say "Success! Workflow complete." Green
+        } else {
+            Say "Installation failed with exit code: $exitCode" Red
+        }
     } else {
         Say "Critical Error: Configuration file could not be generated." Red
     }
