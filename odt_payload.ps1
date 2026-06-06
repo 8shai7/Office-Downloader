@@ -52,15 +52,40 @@ function Invoke-ExeSecure {
 
     Unblock-File -Path $FilePath -ErrorAction SilentlyContinue
 
-    $old = Get-Location
-    try {
-        if ($WorkingDirectory) { Set-Location $WorkingDirectory }
-        $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -Wait
-        return $p.ExitCode
-    } finally { Set-Location $old }
+    $psi = @{
+        FilePath     = $FilePath
+        ArgumentList = $Arguments
+        PassThru     = $true
+        Wait         = $true
+    }
+    if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
+
+    $p = Start-Process @psi
+    return $p.ExitCode
+}
+
+function Write-Utf8NoBom {
+    param([string]$Path, [string]$Content)
+    [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false))
 }
 
 function Start-OfficeODTInteractive {
+
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator
+    )
+    if (-not $isAdmin) {
+        Say "Administrator privileges are required. Relaunching elevated..." Yellow
+        $argList = @(
+            '-NoProfile'
+            '-ExecutionPolicy'
+            'Bypass'
+            '-File'
+            $MyInvocation.PSCommandPath
+        )
+        Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argList | Out-Null
+        return
+    }
 
     Say "--- Office ODT High-Speed Installer (v3.4) ---" Green
     
@@ -74,12 +99,15 @@ function Start-OfficeODTInteractive {
     Invoke-WebRequest -Uri $downloadUrl -OutFile $odtExe -UserAgent "Mozilla/5.0"
 
     Say "Extracting ODT..." Yellow
-    $exitCode = Invoke-ExeSecure -FilePath $odtExe -Arguments @("/quiet", "/extract:`"$odtExtract`"")
+    $exitCode = Invoke-ExeSecure -FilePath $odtExe -Arguments @('/quiet', "/extract:$odtExtract")
     if ($exitCode -ne 0) {
         throw "Failed to extract ODT. Exit code: $exitCode"
     }
     
-    $setupExe = (Get-ChildItem -Path $odtExtract -Filter "setup.exe" -File -Recurse | Select-Object -First 1).FullName
+    $setupExe = (Get-ChildItem -Path $odtExtract -Filter 'setup.exe' -File -Recurse | Select-Object -First 1).FullName
+    if (-not $setupExe) {
+        throw "setup.exe was not found after extracting ODT to $odtExtract"
+    }
 
     # --- Configuration Phase ---
     $productOptions = @{ "1"="M365 Apps"; "2"="Office 2024 LTSC Pro"; "3"="Office 2024 LTSC Std" }
@@ -123,7 +151,8 @@ function Start-OfficeODTInteractive {
         }) -join ""
     }
 
-    $configPath = Join-Path $base "configuration.xml"
+    $setupDir = Split-Path -Parent $setupExe
+    $configPath = Join-Path $setupDir 'configuration.xml'
     $xml = @"
 <Configuration>
   <Add OfficeClientEdition="$arch" Channel="$channel">
@@ -136,24 +165,24 @@ function Start-OfficeODTInteractive {
   <Property Name="SharedComputerLicensing" Value="0" />
 </Configuration>
 "@
-    $xml | Out-File -FilePath $configPath -Encoding UTF8
+    Write-Utf8NoBom -Path $configPath -Content $xml
 
-    if (Test-Path $configPath) {
-        Say "Starting High-Speed Installation (Streaming Mode)..." Green
-        $argList = @("/configure", "`"$configPath`"")
-        $exitCode = Invoke-ExeSecure -FilePath $setupExe -Arguments $argList -WorkingDirectory $odtExtract
-        
-        if ($exitCode -eq 0) {
-            Say "Success! Workflow complete." Green
-        } else {
-            Say "Installation failed with exit code: $exitCode" Red
-        }
-    } else {
-        Say "Critical Error: Configuration file could not be generated." Red
+    if (-not (Test-Path $configPath)) {
+        throw "Critical Error: Configuration file could not be generated at $configPath"
     }
 
-    Say "Cleaning up temporary files..." Gray
-    Remove-Item -Path $base -Recurse -Force -ErrorAction SilentlyContinue
+    Say "Config: $configPath" Gray
+    Say "Starting High-Speed Installation (Streaming Mode)..." Green
+    $exitCode = Invoke-ExeSecure -FilePath $setupExe -Arguments @('/configure', $configPath) -WorkingDirectory $setupDir
+
+    if ($exitCode -eq 0) {
+        Say "Success! Workflow complete." Green
+        Say "Cleaning up temporary files..." Gray
+        Remove-Item -Path $base -Recurse -Force -ErrorAction SilentlyContinue
+    } else {
+        Say "Installation failed with exit code: $exitCode" Red
+        Say "Temp files kept for troubleshooting: $base" Yellow
+    }
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
