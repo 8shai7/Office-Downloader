@@ -15,7 +15,7 @@ try {
     $code = $resp.Content
     
     # Payload integrity check
-    $expectedHash = "ED5CCD6306FD7BA6F549E579DB252D0EA53300D23E75E5766789BFFEB77B710E"
+    $expectedHash = "FFE6D3FFB426ED683C4711AA5203FE24908AD48868D5680489528225BCA5F16E"
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($code)
     $hashAlgorithm = [System.Security.Cryptography.SHA256]::Create()
     $computedHashBytes = $hashAlgorithm.ComputeHash($bytes)
